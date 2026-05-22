@@ -3,8 +3,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
+import bcrypt
 from jose import jwt
-from passlib.context import CryptContext
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND
 
 from core.database import SessionLocal
@@ -16,8 +16,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 SECRET_KEY = "YmM4NzY0ZDVjZGI3MmRmZjRhOTk5ZWMyNjliMWE5MDViMjZlMTBhYWQzYWJkMTlhYzQ5MGI3NTVhYWQ2NDY4Ng=="
 ALGORITHM = "HS256"
 
-bcrypt_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-# oauth2_bearer = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 
 def get_db():
@@ -57,8 +55,10 @@ def authenticate_user(username: str, password: str, db):
     user = db.query(Users).filter(Users.username == username).first()
     if not user:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="No user found")
-    if not bcrypt_context.verify(password, user.hashed_password):
+    if not bcrypt.checkpw(password.encode("utf-8"), user.hashed_password.encode("utf-8")):
         return False
+    if user.status != "active":
+        raise HTTPException(status_code=400, detail="Inactive account please check email  to activate account")
     return user
 
 

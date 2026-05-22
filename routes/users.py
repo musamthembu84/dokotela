@@ -1,16 +1,22 @@
+import secrets
+from datetime import datetime, timedelta
+from typing import List, Annotated
+
+import bcrypt
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.params import Depends
+from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
 from core.dependency import db_dependency
 from core.jwt_utils import get_current_user, authorize_user_access
-from models.models import Users, UserRequest, UserResponse
-from starlette.status import HTTP_201_CREATED, HTTP_200_OK, HTTP_204_NO_CONTENT
-from typing import List, Annotated
-from passlib.context import CryptContext
+from models.models import Users, UserRequest, UserResponse, OnboardingTokens
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-bcrypt_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
 
 token_dep = Annotated[dict, Depends(get_current_user)]
 
@@ -22,25 +28,38 @@ async def create_user(db: db_dependency, create_user_request: UserRequest):
     """
     try:
         password = create_user_request.password
-        password_bytes = password.encode('utf-8')
         type_of_user = create_user_request.role
         verify_user_type(type_of_user)
-
-        # Truncate to 72 bytes if necessary
-        if len(password_bytes) > 72:
-            password = password_bytes[:72].decode('utf-8', errors='ignore')
-            print(f"Truncated password: {password}")
-
+        user_status = await get_type_of_user(type_of_user)
         # Create user model
         create_user_model = Users(
             username=create_user_request.username,
-            hashed_password=bcrypt_context.hash(password),
-            role=type_of_user
-
+            hashed_password=hash_password(password),
+            role=type_of_user,
+            status=user_status,
+            email=create_user_request.email
         )
+
         db.add(create_user_model)
+        db.flush()  # Flush to assign an ID before commit
+
+        tokens = None
+        if type_of_user == "doctor":
+            doctor_token = secrets.token_urlsafe(32)
+
+            tokens = OnboardingTokens(
+                doctor_id=create_user_model.id,
+                token=doctor_token,
+                expires_at=datetime.now() + timedelta(days=14),
+                used=False
+            )
+            db.add(tokens)
+            print(f"Onboarding token: {tokens.token}")
+
         db.commit()
         db.refresh(create_user_model)
+        if tokens is not None:
+            db.refresh(tokens)
 
         print(f"User created: {create_user_model.username}")
 
@@ -54,17 +73,14 @@ async def create_user(db: db_dependency, create_user_request: UserRequest):
         raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
 
 
-@router.get("/", response_model=List[UserResponse])
-async def get_all_users(db: db_dependency):
-    """
-    Fetch all users from the database
-    """
-    users = db.query(Users).all()
+async def get_type_of_user(type_of_user: str) -> str:
+    user_status = ""
+    if type_of_user == "doctor":
+        user_status = "pending"
+    elif type_of_user == "patient" or type_of_user == "admin":
+        user_status = "active"
+    return user_status
 
-    if not users:
-        raise HTTPException(status_code=404, detail="No users found")
-
-    return [UserResponse.model_validate(user) for user in users]
 
 
 @router.get("/{doctor_id}/patients", response_model=List[UserResponse])
@@ -120,7 +136,7 @@ async def delete_user(user_id: int, db: db_dependency):
 
 
 def verify_user_type(role: str):
-    if role not in ("doctor", "patient"):
+    if role not in ("doctor", "patient", "admin"):
         raise HTTPException(status_code=400,
                             detail=" Role must be 'doctor' or 'patient'")
     return role
@@ -131,5 +147,3 @@ def authorize_doctors_to_see_patients(user_id: int, token: dict):
     role = token["role"]
     if role != "doctor" or token_user_id != user_id:
         raise HTTPException(status_code=403, detail="No permission to access patients")
-
-

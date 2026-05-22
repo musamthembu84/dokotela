@@ -50,3 +50,12 @@ def get_message(session_id: str):
 
     data = json.loads(raw.decode("utf-8"))
     return data["messages"]
+
+
+def get_session(session_id: str) -> dict | None:
+    """Return the full session dict, or None if it doesn't exist / has expired."""
+    raw = redis_client.get(_key(session_id))
+    if not raw:
+        return None
+    return json.loads(raw.decode("utf-8"))
+

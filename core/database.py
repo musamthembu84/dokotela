@@ -1,10 +1,10 @@
-from sqlalchemy import  create_engine
-from sqlalchemy.ext.declarative import  declarative_base
-from sqlalchemy.orm import  Session, sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 
 DB_HOST = "localhost"
-DB_NAME ="postgres"
+DB_NAME = "postgres"
 DB_USER = "username"
 DB_PASSWORD = "password"
 DB_PORT = 5432
