@@ -23,6 +23,8 @@ def get_current_user(db: db_dependency, token: token_dep):
 def checkout(request: CheckoutRequest,
              db: db_dependency,
              current_user: int = Depends(get_current_user)):
+
+    logger.info("Incoming checkout request: %s", request)
     payment = PaymentService.create_payment(
         db=db,
         user_id=current_user,

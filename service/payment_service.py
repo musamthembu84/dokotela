@@ -16,6 +16,7 @@ class PaymentService:
 
     @staticmethod
     def create_payment(db: Session, user_id: int, amount, consultation_session_id: str | None = None) -> Payments:
+        logger.info("Incoming create_payment request: user_id=%s amount=%s consultation_session_id=%s", user_id, amount, consultation_session_id)
         payment = Payments(
             user_id=user_id,
             amount=amount,
@@ -52,8 +53,8 @@ class PaymentService:
         data = {
             "merchant_id": settings.PAYFAST_MERCHANT_ID,
             "merchant_key": settings.PAYFAST_MERCHANT_KEY,
-            "return_url": f"{settings.APP_BASE_URL}/payments/success?payment_id={payment.id}",
-            "cancel_url": f"{settings.APP_BASE_URL}/payments/cancel?payment_id={payment.id}",
+            "return_url": f"{settings.FRONTEND_BASE_URL}/vedio-generator?payment_id={payment.id}",
+            "cancel_url": f"{settings.FRONTEND_BASE_URL}/payments/cancel?payment_id={payment.id}",
             "notify_url": f"{settings.APP_BASE_URL}/payments/webhook",
             "m_payment_id": str(payment.id),
             "amount": f"{payment.amount:.2f}",

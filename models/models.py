@@ -73,7 +73,9 @@ class Visit(Base):
     scheduled_at = Column(DateTime, nullable=False)
     status = Column(String, nullable=False, default="scheduled")
     created_at = Column(DateTime, nullable=False, default=datetime.now)
-
+    channel_name = Column(String(255), unique=True)
+    video_provider = Column(String(50), default="agora")
+    video_status = Column(String(50), default="waiting")
     patient = relationship("Users", foreign_keys=[patient_id])
     doctor = relationship("Users", foreign_keys=[doctor_id])
 
@@ -243,3 +245,25 @@ class PendingDoctorsResponse(BaseModel):
     hpcsa_number: str
     verification_status: str
     created_at: datetime
+
+
+class CreateVisitRequest(BaseModel):
+    scheduled_at: datetime
+
+
+class VisitResponse(BaseModel):
+    id: int
+    consultation_id: int
+    patient_id: int
+    doctor_id: int
+    scheduled_at: datetime
+    status: str
+
+
+class JoinVisitResponse(BaseModel):
+    channel_name: str
+    agora_token: str
+    app_id: str
+    uid: int
+    video_provider: str
+    join_url: str
