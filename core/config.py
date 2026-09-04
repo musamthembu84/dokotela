@@ -25,8 +25,11 @@ class Settings(BaseSettings):
     AGORA_APP_ID: str = ""
     AGORA_APP_CERTIFICATE: str = ""
 
-    SECRET_KEY: str = "changeme"
+    # NOTE: kept as the previous hardcoded value so existing tokens/sessions
+    # remain valid after this refactor. Override via .env in real deployments.
+    SECRET_KEY: str = "YmM4NzY0ZDVjZGI3MmRmZjRhOTk5ZWMyNjliMWE5MDViMjZlMTBhYWQzYWJkMTlhYzQ5MGI3NTVhYWQ2NDY4Ng=="
     ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 20
 
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),

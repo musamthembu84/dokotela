@@ -1,43 +1,31 @@
 from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
 
-SECRET_KEY = "YmM4NzY0ZDVjZGI3MmRmZjRhOTk5ZWMyNjliMWE5MDViMjZlMTBhYWQzYWJkMTlhYzQ5MGI3NTVhYWQ2NDY4Ng=="
-ALGORITHM = "HS256"
+from service.auth_service import AuthService
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> dict:
+    # AuthService.decode_token raises HTTPException(401) for invalid,
+    # expired, or revoked (signed out) tokens.
+    payload = AuthService.decode_token(token)
 
-    print("RAW TOKEN:", token)
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    username: str = payload.get("sub")
+    user_id: int = payload.get("id")
+    role: str = payload.get("role")
 
-        print("PAYLOAD", payload)
-
-        username: str = payload.get("sub")
-        user_id: int = payload.get("id")
-        role: str = payload.get("role")
-
-        if not username or not user_id or not role:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-            )
-
-        return {
-            "username": username,
-            "id": int(user_id),
-            "role": role,
-        }
-
-    except JWTError as e:
-        print("JWT Error", e)
+    if not username or not user_id or not role:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail="Invalid token payload",
         )
+
+    return {
+        "username": username,
+        "id": int(user_id),
+        "role": role,
+    }
 
 
 def authorize_user_access(user_id: int, token: dict):

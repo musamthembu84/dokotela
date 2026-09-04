@@ -155,7 +155,8 @@ class VisitService:
         return (
             db.query(Visit)
             .filter(
-                (Visit.patient_id == user_id) | (Visit.doctor_id == user_id)
+                ((Visit.patient_id == user_id) | (Visit.doctor_id == user_id))
+                & (Visit.scheduled_at >= datetime.now())
             )
             .order_by(Visit.scheduled_at.desc())
             .all()
