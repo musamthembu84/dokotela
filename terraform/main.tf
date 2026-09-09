@@ -182,7 +182,7 @@ resource "aws_elasticache_cluster" "redis" {
 
 resource "aws_key_pair" "deployer" {
   key_name   = "fastapi-deployer-key"
-  public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN2s06z4E5hpqSk3i+v6iaXLyeWSgKQoM85o2yoKUz7s musamthembu84@gmail.com"
+  public_key = file(pathexpand("~/.ssh/id_ed25519.pub"))
 }
 
 # EC2 Instance with Automated Bootstrapping Configuration
@@ -213,7 +213,7 @@ resource "aws_instance" "web" {
   tags = { Name = "FastAPI-Docker-Server" }
 }
 resource "aws_eip" "fastapi_static_ip" {
-  domain = "vpc"
+  domain   = "vpc"
   instance = aws_instance.web.id
 
   tags = {
