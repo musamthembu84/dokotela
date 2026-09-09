@@ -56,6 +56,81 @@ resource "aws_route_table_association" "a" {
   route_table_id = aws_route_table.rt.id
 }
 
+resource "aws_ecr_repository" "dokotela" {
+  name                 = "dokotela"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+  tags = {
+    Name        = "dokotela"
+    Environment = "production"
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "dokotela" {
+  repository = aws_ecr_repository.dokotela.name
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep the last 10 images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 10
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+# ==============================================================================
+# IAM - EC2 ECR Pull Access
+# ==============================================================================
+
+resource "aws_iam_role" "ec2_ecr_pull" {
+  name = "dokotela-ec2-ecr-pull-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Name        = "dokotela-ec2-ecr-pull-role"
+    Environment = "production"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ec2_ecr_pull" {
+  role       = aws_iam_role.ec2_ecr_pull.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+resource "aws_iam_instance_profile" "ec2_ecr_pull" {
+  name = "dokotela-ec2-ecr-pull-profile"
+  role = aws_iam_role.ec2_ecr_pull.name
+}
+
 # ==============================================================================
 # 2. FIREWALL & SECURITY GROUPS
 # ==============================================================================
@@ -192,8 +267,8 @@ resource "aws_instance" "web" {
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.web_sg.id]
   key_name               = aws_key_pair.deployer.key_name # Fixed resource reference tracking string
-
-  user_data = <<-EOF
+  iam_instance_profile   = aws_iam_instance_profile.ec2_ecr_pull.name
+  user_data              = <<-EOF
               #!/bin/bash
               dnf update -y
               dnf install -y docker
@@ -243,4 +318,9 @@ output "rds_endpoint" {
 output "redis_endpoint" {
   value       = aws_elasticache_cluster.redis.cache_nodes[0].address
   description = "The network connection address for your Redis cluster"
+}
+
+output "ecr_repository_url" {
+  value       = aws_ecr_repository.dokotela.repository_url
+  description = "ECR repository URL for Dokotela"
 }

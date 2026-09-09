@@ -5,6 +5,13 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: dokotela
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -13,32 +20,92 @@ jobs:
       - name: Checkout Codebase
         uses: actions/checkout@v4
 
-      - name: Securely Copy Code to AWS EC2
-        uses: appleboy/scp-action@v0.1.7
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.EC2_PUBLIC_IP }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
-          source: "./*"
-          target: "/home/ubuntu/app"
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Automated Schema Migration & API Reboot
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            .
+
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+
+          DB_HOST: ${{ secrets.AWS_RDS_ENDPOINT }}
+          DB_PASSWORD: ${{ secrets.AWS_RDS_PASSWORD }}
+          REDIS_HOST: ${{ secrets.AWS_REDIS_ENDPOINT }}
+
+          PAYFAST_MERCHANT_ID: ${{ secrets.PAYFAST_MERCHANT_ID }}
+          PAYFAST_MERCHANT_KEY: ${{ secrets.PAYFAST_MERCHANT_KEY }}
+          PAYFAST_PASSPHRASE: ${{ secrets.PAYFAST_PASSPHRASE }}
+          PAYFAST_SANDBOX: ${{ secrets.PAYFAST_SANDBOX }}
+
+          AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
+          AGORA_APP_CERTIFICATE: ${{ secrets.AGORA_APP_CERTIFICATE }}
+
         with:
           host: ${{ secrets.EC2_PUBLIC_IP }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
+
+          envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE
+
           script: |
+            set -e
+
             cd /home/ubuntu/app
 
+            echo "Creating production environment..."
+
             cat <<EOT > .env
-            DB_HOST=${{ secrets.AWS_RDS_ENDPOINT }}
+            ECR_REPOSITORY_URL=$ECR_REGISTRY/dokotela
+            IMAGE_TAG=$IMAGE_TAG
+
+            DB_HOST=$DB_HOST
             DB_NAME=postgres
             DB_USER=db_admin_musa
-            DB_PASSWORD=${{ secrets.AWS_RDS_PASSWORD }}
-            REDIS_HOST=${{ secrets.AWS_REDIS_ENDPOINT }}
+            DB_PASSWORD=$DB_PASSWORD
+
+            REDIS_HOST=$REDIS_HOST
+
+            PAYFAST_MERCHANT_ID=$PAYFAST_MERCHANT_ID
+            PAYFAST_MERCHANT_KEY=$PAYFAST_MERCHANT_KEY
+            PAYFAST_PASSPHRASE=$PAYFAST_PASSPHRASE
+            PAYFAST_SANDBOX=$PAYFAST_SANDBOX
+
+            AGORA_APP_ID=$AGORA_APP_ID
+            AGORA_APP_CERTIFICATE=$AGORA_APP_CERTIFICATE
             EOT
 
-            docker compose -f docker-compose.prod.yml up --build -d
+            chmod 600 .env
+
+            echo "Pulling FastAPI image from ECR..."
+
+            docker compose -f docker-compose.prod.yml pull fastapi
+
+            echo "Starting production services..."
+
+            docker compose -f docker-compose.prod.yml up -d
+
+            echo "Deployment status:"
+
+            docker compose -f docker-compose.prod.yml ps
