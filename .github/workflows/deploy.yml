@@ -35,7 +35,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # --------------------------------------------------
-      # 3. Login GitHub runner to ECR
+      # 3. Login GitHub runner to ECR onces only
       # --------------------------------------------------
       - name: Login to Amazon ECR
         id: login-ecr
