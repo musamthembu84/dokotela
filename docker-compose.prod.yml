@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # 1. Ephemeral migration task: Runs your SQL scripts against the database, then stops
+  flyway-migration:
+    image: flyway/flyway:10
+    container_name: production-flyway-runner
+    entrypoint: [ "flyway", "migrate" ]
+    volumes:
+      # FIX: Points to the local folder inside your current repository
+      - ./sql_versions:/flyway/sql:ro
+    environment:
+      # These variables will accept your AWS RDS credentials
+      - FLYWAY_URL=jdbc:postgresql://${DB_HOST:-127.0.0.1}:5432/${DB_NAME:-postgres}
+      - FLYWAY_USER=${DB_USER:-db_admin_musa}
+      - FLYWAY_PASSWORD=${DB_PASSWORD}
+      - FLYWAY_SCHEMAS=health
+
+  # 2. Your API service: Starts ONLY if the database migrations succeed perfectly
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: production-fastapi-app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-db_admin_musa}:${DB_PASSWORD}@${DB_HOST:-127.0.0.1}:5432/${DB_NAME:-postgres}
+      - REDIS_URL=redis://${REDIS_HOST:-127.0.0.1}:6379/0
+    depends_on:
+      flyway-migration:
+        condition: service_completed_successfully
