@@ -1,12 +1,16 @@
 version: '3.8'
 
 services:
+
   flyway-migration:
     image: flyway/flyway:10
     container_name: production-flyway-runner
-    entrypoint: ["flyway", "migrate"]
+
+    entrypoint: [ "flyway", "migrate" ]
+
     volumes:
       - ./sql_versions:/flyway/sql:ro
+
     environment:
       - FLYWAY_URL=jdbc:postgresql://${DB_HOST}:5432/${DB_NAME}
       - FLYWAY_USER=${DB_USER}
@@ -15,9 +19,12 @@ services:
 
   fastapi:
     image: ${ECR_REPOSITORY_URL}:${IMAGE_TAG}
+
     container_name: production-fastapi-app
+
     ports:
       - "8000:8000"
+
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}
       - REDIS_URL=redis://${REDIS_HOST}:6379/0
@@ -33,3 +40,4 @@ services:
     depends_on:
       flyway-migration:
         condition: service_completed_successfully
+

@@ -18,9 +18,15 @@ jobs:
 
     steps:
 
+      # --------------------------------------------------
+      # 1. Checkout source code
+      # --------------------------------------------------
       - name: Checkout Codebase
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Configure AWS credentials on GitHub runner
+      # --------------------------------------------------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -28,10 +34,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # --------------------------------------------------
+      # 3. Login GitHub runner to ECR
+      # --------------------------------------------------
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # --------------------------------------------------
+      # 4. Build Docker image and push to ECR
+      # --------------------------------------------------
       - name: Build and Push Docker Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -40,10 +52,13 @@ jobs:
           docker build \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             .
-
+          
           docker push \
             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
+      # --------------------------------------------------
+      # 5. Copy production files to EC2
+      # --------------------------------------------------
       - name: Copy Production Files to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -54,8 +69,12 @@ jobs:
           source: "docker-compose.prod.yml,sql_versions"
           target: "/home/ubuntu/app"
 
+      # --------------------------------------------------
+      # 6. Deploy application on EC2
+      # --------------------------------------------------
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
+
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -82,41 +101,74 @@ jobs:
 
           script: |
             set -e
-
+            
             cd /home/ubuntu/app
-
-            echo "Creating production environment..."
-
+            
+            echo "========================================="
+            echo "Creating production environment"
+            echo "========================================="
+            
             cat <<EOT > .env
             ECR_REPOSITORY_URL=$ECR_REGISTRY/dokotela
             IMAGE_TAG=$IMAGE_TAG
-
+            
             DB_HOST=$DB_HOST
             DB_NAME=postgres
             DB_USER=db_admin_musa
             DB_PASSWORD=$DB_PASSWORD
-
+            
             REDIS_HOST=$REDIS_HOST
-
+            
             PAYFAST_MERCHANT_ID=$PAYFAST_MERCHANT_ID
             PAYFAST_MERCHANT_KEY=$PAYFAST_MERCHANT_KEY
             PAYFAST_PASSPHRASE=$PAYFAST_PASSPHRASE
             PAYFAST_SANDBOX=$PAYFAST_SANDBOX
-
+            
             AGORA_APP_ID=$AGORA_APP_ID
             AGORA_APP_CERTIFICATE=$AGORA_APP_CERTIFICATE
             EOT
-
+            
             chmod 600 .env
+            
+            echo "========================================="
+            echo "Logging Docker into Amazon ECR"
+            echo "========================================="
+            
+            aws ecr get-login-password \
+              --region us-east-1 \
+              | docker login \
+                --username AWS \
+                --password-stdin 506199645375.dkr.ecr.us-east-1.amazonaws.com
+            
+            echo "========================================="
+            echo "Validating Docker Compose configuration"
+            echo "========================================="
+            
+            docker compose \
+              -f docker-compose.prod.yml \
+              config --quiet
+            
+            echo "========================================="
+            echo "Pulling FastAPI image from ECR"
+            echo "========================================="
+            
+            docker compose \
+              -f docker-compose.prod.yml \
+              pull fastapi
+            
+            echo "========================================="
+            echo "Starting production services"
+            echo "========================================="
+            
+            docker compose \
+              -f docker-compose.prod.yml \
+              up -d --force-recreate
+            
+            echo "========================================="
+            echo "Deployment status"
+            echo "========================================="
+            
+            docker compose \
+              -f docker-compose.prod.yml \
+              ps
 
-            echo "Pulling FastAPI image from ECR..."
-
-            docker compose -f docker-compose.prod.yml pull fastapi
-
-            echo "Starting production services..."
-
-            docker compose -f docker-compose.prod.yml up -d --force-recreate
-
-            echo "Deployment status:"
-
-            docker compose -f docker-compose.prod.yml ps
