@@ -49,4 +49,4 @@ requests==2.34.2
 bcrypt
 pydantic-settings==2.14.1
 agora-token-builder
-
+redis==6.4.0
