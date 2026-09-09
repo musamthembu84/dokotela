@@ -1,46 +1,27 @@
-name: Production Continuous Deployment
+- name: Securely Copy Code to AWS EC2
+  uses: appleboy/scp-action@v0.1.7
+  with:
+    host: ${{ secrets.EC2_PUBLIC_IP }}
+    username: ubuntu
+    key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+    port: 22
+    source: "./*"
+    target: "/home/ubuntu/app"
 
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Codebase
-        uses: actions/checkout@v4
-
-      - name: Securely Copy Code to AWS EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_PUBLIC_IP }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}      # Your private key contents (~/.ssh/id_ed25519)
-          port: 22
-          source: "./*"
-          target: "/home/ec2-user/app"
-
-      - name: Automated Schema Migration & API Reboot
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_PUBLIC_IP }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            cd /home/ec2-user/app
-            
-            # 🧠 Automatically writes the production .env file on the server using secure pipeline secrets!
-            cat <<EOT > .env
-            DB_HOST=${{ secrets.AWS_RDS_ENDPOINT }}
-            DB_NAME=postgres
-            DB_USER=db_admin_musa
-            DB_PASSWORD=${{ secrets.AWS_RDS_PASSWORD }}
-            REDIS_HOST=${{ secrets.AWS_REDIS_ENDPOINT }}
-            EOT
-            
-            # 🚀 Launches your whole stack. Flyway runs table updates first, then FastAPI launches cleanly!
-            docker compose -f docker-compose.prod.yml up --build -d
+- name: Automated Schema Migration & API Reboot
+  uses: appleboy/ssh-action@v1.0.3
+  with:
+    host: ${{ secrets.EC2_PUBLIC_IP }}
+    username: ubuntu
+    key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+    port: 22
+    script: |
+      cd /home/ubuntu/app
+      cat <<EOT > .env
+      DB_HOST=${{ secrets.AWS_RDS_ENDPOINT }}
+      DB_NAME=postgres
+      DB_USER=db_admin_musa
+      DB_PASSWORD=${{ secrets.AWS_RDS_PASSWORD }}
+      REDIS_HOST=${{ secrets.AWS_REDIS_ENDPOINT }}
+      EOT
+      docker compose -f docker-compose.prod.yml up --build -d
