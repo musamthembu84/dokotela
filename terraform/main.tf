@@ -212,6 +212,14 @@ resource "aws_instance" "web" {
 
   tags = { Name = "FastAPI-Docker-Server" }
 }
+resource "aws_eip" "fastapi_static_ip" {
+  domain = "vpc"
+  instance = aws_instance.web.id
+
+  tags = {
+    Name = "fastapi-static-ip"
+  }
+}
 
 # ==============================================================================
 # 5. VARIABLES & OUTBOUND OUTPUT STRINGS
@@ -223,7 +231,7 @@ variable "db_password" {
 }
 
 output "public_ip" {
-  value       = aws_instance.web.public_ip
+  value       = aws_eip.fastapi_static_ip.public_ip
   description = "The public IP of your FastAPI server"
 }
 
