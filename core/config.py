@@ -8,6 +8,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 class Settings(BaseSettings):
     #DATABASE_URL: str = "jdbc:postgresql://localhost:5432/postgres"
     DATABASE_URL: str
+    REDIS_URL: str
 
     PAYFAST_MERCHANT_ID: str
     PAYFAST_MERCHANT_KEY: str
