@@ -17,8 +17,8 @@ jobs:
 deploy:
 runs-on: ubuntu-latest
 
-steps:
 
+steps:
   # --------------------------------------------------
   # 1. Checkout source code
   # --------------------------------------------------
@@ -93,19 +93,15 @@ steps:
     uses: appleboy/ssh-action@v1.0.3
     env:
       ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-
       DB_HOST: ${{ secrets.AWS_RDS_ENDPOINT }}
       DB_PASSWORD: ${{ secrets.AWS_RDS_PASSWORD }}
       REDIS_HOST: ${{ secrets.AWS_REDIS_ENDPOINT }}
-
       PAYFAST_MERCHANT_ID: ${{ secrets.PAYFAST_MERCHANT_ID }}
       PAYFAST_MERCHANT_KEY: ${{ secrets.PAYFAST_MERCHANT_KEY }}
       PAYFAST_PASSPHRASE: ${{ secrets.PAYFAST_PASSPHRASE }}
       PAYFAST_SANDBOX: ${{ secrets.PAYFAST_SANDBOX }}
-
       AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
       AGORA_APP_CERTIFICATE: ${{ secrets.AGORA_APP_CERTIFICATE }}
-
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
       APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
       FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
@@ -115,22 +111,7 @@ steps:
       username: ubuntu
       key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
       port: 22
-
-      envs: >-
-        ECR_REGISTRY,
-        IMAGE_TAG,
-        DB_HOST,
-        DB_PASSWORD,
-        REDIS_HOST,
-        PAYFAST_MERCHANT_ID,
-        PAYFAST_MERCHANT_KEY,
-        PAYFAST_PASSPHRASE,
-        PAYFAST_SANDBOX,
-        AGORA_APP_ID,
-        AGORA_APP_CERTIFICATE,
-        SECRET_KEY,
-        APP_BASE_URL,
-        FRONTEND_BASE_URL
+      envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE,SECRET_KEY,APP_BASE_URL,FRONTEND_BASE_URL
 
       script: |
         set -e
