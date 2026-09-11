@@ -92,6 +92,47 @@ resource "aws_ecr_lifecycle_policy" "dokotela" {
   })
 }
 
+resource "aws_ecr_repository" "dokotela_frontend" {
+  name                 = "dokotela-frontend"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  tags = {
+    Name        = "dokotela-frontend"
+    Environment = "production"
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "dokotela_frontend" {
+  repository = aws_ecr_repository.dokotela_frontend.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep the last 10 images"
+
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 10
+        }
+
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
 # ==============================================================================
 # IAM - EC2 ECR Pull Access
 # ==============================================================================
@@ -138,19 +179,29 @@ resource "aws_iam_instance_profile" "ec2_ecr_pull" {
 # Security Group for the EC2 Web Server
 resource "aws_security_group" "web_sg" {
   name        = "fastapi-sg"
-  description = "Allow inbound SSH and HTTP traffic to FastAPI server"
+  description = "Allow inbound SSH, HTTP, FastAPI and frontend traffic"
   vpc_id      = aws_vpc.main.id
 
+  # SSH
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Restrict to your specific home IP address later!
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # FastAPI
   ingress {
     from_port   = 8000
     to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Next.js Frontend
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -323,4 +374,9 @@ output "redis_endpoint" {
 output "ecr_repository_url" {
   value       = aws_ecr_repository.dokotela.repository_url
   description = "ECR repository URL for Dokotela"
+}
+
+output "ecr_frontend_repository_url" {
+  value       = aws_ecr_repository.dokotela_frontend.repository_url
+  description = "ECR repository URL for Dokotela frontend"
 }

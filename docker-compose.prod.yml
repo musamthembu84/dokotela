@@ -36,6 +36,8 @@ services:
 
       - AGORA_APP_ID=${AGORA_APP_ID}
       - AGORA_APP_CERTIFICATE=${AGORA_APP_CERTIFICATE}
+      - FRONTEND_BASE_URL =${FRONTEND_BASE_URL}
+      - APP_BASE_URL =${APP_BASE_URL}
 
     depends_on:
       flyway-migration:

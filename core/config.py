@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     PAYFAST_SANDBOX: bool = True
     APP_BASE_URL: str = "http://localhost:8000"
-    FRONTEND_BASE_URL: str = "http://localhost:3000"
+    FRONTEND_BASE_URL: str = "http://3.230.69.18:3000"
 
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
