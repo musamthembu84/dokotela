@@ -35,7 +35,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # --------------------------------------------------
-      # 3. Login GitHub runner to ECR onces only
+      # 3. Login GitHub runner to ECR
       # --------------------------------------------------
       - name: Login to Amazon ECR
         id: login-ecr
@@ -52,7 +52,7 @@ jobs:
           docker build \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             .
-          
+
           docker push \
             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
@@ -77,7 +77,10 @@ jobs:
 
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+
+          # IMPORTANT:
+          # This MUST match the tag used during the Docker push above.
+          IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
 
           DB_HOST: ${{ secrets.AWS_RDS_ENDPOINT }}
           DB_PASSWORD: ${{ secrets.AWS_RDS_PASSWORD }}
@@ -91,84 +94,93 @@ jobs:
           AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
           AGORA_APP_CERTIFICATE: ${{ secrets.AGORA_APP_CERTIFICATE }}
 
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+
         with:
           host: ${{ secrets.EC2_PUBLIC_IP }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
 
-          envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE
+          envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE,SECRET_KEY,APP_BASE_URL,FRONTEND_BASE_URL
 
           script: |
             set -e
-            
+
             cd /home/ubuntu/app
-            
+
             echo "========================================="
             echo "Creating production environment"
             echo "========================================="
-            
+
             cat <<EOT > .env
+
             ECR_REPOSITORY_URL=$ECR_REGISTRY/dokotela
             IMAGE_TAG=$IMAGE_TAG
-            
+
             DB_HOST=$DB_HOST
             DB_NAME=postgres
             DB_USER=db_admin_musa
             DB_PASSWORD=$DB_PASSWORD
-            
+
             REDIS_HOST=$REDIS_HOST
-            
+
             PAYFAST_MERCHANT_ID=$PAYFAST_MERCHANT_ID
             PAYFAST_MERCHANT_KEY=$PAYFAST_MERCHANT_KEY
             PAYFAST_PASSPHRASE=$PAYFAST_PASSPHRASE
             PAYFAST_SANDBOX=$PAYFAST_SANDBOX
-            
+
             AGORA_APP_ID=$AGORA_APP_ID
             AGORA_APP_CERTIFICATE=$AGORA_APP_CERTIFICATE
+
+            SECRET_KEY=$SECRET_KEY
+            APP_BASE_URL=$APP_BASE_URL
+            FRONTEND_BASE_URL=$FRONTEND_BASE_URL
+
             EOT
-            
+
             chmod 600 .env
-            
+
             echo "========================================="
             echo "Logging Docker into Amazon ECR"
             echo "========================================="
-            
+
             aws ecr get-login-password \
               --region us-east-1 \
               | docker login \
                 --username AWS \
                 --password-stdin 506199645375.dkr.ecr.us-east-1.amazonaws.com
-            
+
             echo "========================================="
             echo "Validating Docker Compose configuration"
             echo "========================================="
-            
+
             docker compose \
               -f docker-compose.prod.yml \
               config --quiet
-            
+
             echo "========================================="
             echo "Pulling FastAPI image from ECR"
             echo "========================================="
-            
+
             docker compose \
               -f docker-compose.prod.yml \
               pull fastapi
-            
+
             echo "========================================="
             echo "Starting production services"
             echo "========================================="
-            
+
             docker compose \
               -f docker-compose.prod.yml \
               up -d --force-recreate
-            
+
             echo "========================================="
             echo "Deployment status"
             echo "========================================="
-            
+
             docker compose \
               -f docker-compose.prod.yml \
               ps
-
