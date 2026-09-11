@@ -1,71 +1,136 @@
-provider "aws" {
-  region = "us-east-1"
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
 }
 
-# ==============================================================================
-# 1. NETWORK LAYER (VPC, Subnets & Routing)
-# ==============================================================================
+provider "aws" {
+  region = var.aws_region
+}
+
+# =========================================================
+# DATA SOURCES
+# =========================================================
+
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+# Latest Ubuntu 24.04 LTS AMI for us-east-1
+data "aws_ssm_parameter" "ubuntu_ami" {
+  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+}
+
+# =========================================================
+# VPC
+# =========================================================
 
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
-  tags                 = { Name = "fastapi-vpc" }
+  enable_dns_support   = true
+
+  tags = {
+    Name        = "doketela-vpc"
+    Environment = "production"
+  }
 }
+
+# =========================================================
+# INTERNET GATEWAY
+# =========================================================
 
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.main.id
-  tags   = { Name = "fastapi-igw" }
+
+  tags = {
+    Name = "doketela-igw"
+  }
 }
 
-# Public Subnet for the EC2 Application Server
+# =========================================================
+# PUBLIC SUBNET
+# =========================================================
+
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[0]
   map_public_ip_on_launch = true
-  availability_zone       = "us-east-1a"
-  tags                    = { Name = "fastapi-public-subnet" }
+
+  tags = {
+    Name = "doketela-public-subnet"
+  }
 }
 
-# Private Subnet 1 for Managed Data Services (Fixed CIDR Block Conflict)
+# =========================================================
+# PRIVATE SUBNETS
+# =========================================================
+
 resource "aws_subnet" "private_1" {
   vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.2.0/24" # Changed from 10.0.1.0/24 to prevent overlap
-  availability_zone = "us-east-1a"
-  tags              = { Name = "fastapi-private-subnet-1" }
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = data.aws_availability_zones.available.names[0]
+
+  tags = {
+    Name = "doketela-private-subnet-1"
+  }
 }
 
-# Private Subnet 2 for Managed Data Services (Required for Multi-AZ RDS Deployment)
 resource "aws_subnet" "private_2" {
   vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.11.0/24"
-  availability_zone = "us-east-1b"
-  tags              = { Name = "fastapi-private-subnet-2" }
+  cidr_block        = "10.0.3.0/24"
+  availability_zone = data.aws_availability_zones.available.names[1]
+
+  tags = {
+    Name = "doketela-private-subnet-2"
+  }
 }
 
-# Public Routing Configurations
-resource "aws_route_table" "rt" {
+# =========================================================
+# PUBLIC ROUTE TABLE
+# =========================================================
+
+resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
+
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.gw.id
   }
+
+  tags = {
+    Name = "doketela-public-route-table"
+  }
 }
 
-resource "aws_route_table_association" "a" {
+resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.rt.id
+  route_table_id = aws_route_table.public.id
 }
+
+# =========================================================
+# ECR - BACKEND
+# =========================================================
 
 resource "aws_ecr_repository" "dokotela" {
   name                 = "dokotela"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
   }
+
   encryption_configuration {
     encryption_type = "AES256"
   }
+
   tags = {
     Name        = "dokotela"
     Environment = "production"
@@ -74,16 +139,19 @@ resource "aws_ecr_repository" "dokotela" {
 
 resource "aws_ecr_lifecycle_policy" "dokotela" {
   repository = aws_ecr_repository.dokotela.name
+
   policy = jsonencode({
     rules = [
       {
         rulePriority = 1
-        description  = "Keep the last 10 images"
+        description  = "Keep the latest 10 images"
+
         selection = {
           tagStatus   = "any"
           countType   = "imageCountMoreThan"
           countNumber = 10
         }
+
         action = {
           type = "expire"
         }
@@ -92,9 +160,14 @@ resource "aws_ecr_lifecycle_policy" "dokotela" {
   })
 }
 
+# =========================================================
+# ECR - FRONTEND
+# =========================================================
+
 resource "aws_ecr_repository" "dokotela_frontend" {
   name                 = "dokotela-frontend"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -117,7 +190,7 @@ resource "aws_ecr_lifecycle_policy" "dokotela_frontend" {
     rules = [
       {
         rulePriority = 1
-        description  = "Keep the last 10 images"
+        description  = "Keep the latest 10 images"
 
         selection = {
           tagStatus   = "any"
@@ -133,12 +206,12 @@ resource "aws_ecr_lifecycle_policy" "dokotela_frontend" {
   })
 }
 
-# ==============================================================================
-# IAM - EC2 ECR Pull Access
-# ==============================================================================
+# =========================================================
+# IAM ROLE FOR EC2
+# =========================================================
 
 resource "aws_iam_role" "ec2_ecr_pull" {
-  name = "dokotela-ec2-ecr-pull-role"
+  name = "doketela-ec2-ecr-pull-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -157,8 +230,7 @@ resource "aws_iam_role" "ec2_ecr_pull" {
   })
 
   tags = {
-    Name        = "dokotela-ec2-ecr-pull-role"
-    Environment = "production"
+    Name = "doketela-ec2-ecr-pull-role"
   }
 }
 
@@ -168,22 +240,22 @@ resource "aws_iam_role_policy_attachment" "ec2_ecr_pull" {
 }
 
 resource "aws_iam_instance_profile" "ec2_ecr_pull" {
-  name = "dokotela-ec2-ecr-pull-profile"
+  name = "doketela-ec2-ecr-pull-profile"
   role = aws_iam_role.ec2_ecr_pull.name
 }
 
-# ==============================================================================
-# 2. FIREWALL & SECURITY GROUPS
-# ==============================================================================
+# =========================================================
+# WEB SECURITY GROUP
+# =========================================================
 
-# Security Group for the EC2 Web Server
 resource "aws_security_group" "web_sg" {
-  name        = "fastapi-sg"
-  description = "Allow inbound SSH, HTTP, FastAPI and frontend traffic"
+  name        = "doketela-web-sg"
+  description = "Security group for Doketela application EC2"
   vpc_id      = aws_vpc.main.id
 
   # SSH
   ingress {
+    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -192,14 +264,16 @@ resource "aws_security_group" "web_sg" {
 
   # FastAPI
   ingress {
+    description = "FastAPI"
     from_port   = 8000
     to_port     = 8000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Next.js Frontend
+  # Next.js frontend
   ingress {
+    description = "Next.js frontend"
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
@@ -212,19 +286,45 @@ resource "aws_security_group" "web_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "doketela-web-sg"
+  }
 }
 
-# Security Group for the PostgreSQL Database
+# =========================================================
+# POSTGRESQL SECURITY GROUP
+# =========================================================
+
 resource "aws_security_group" "db_sg" {
-  name        = "fastapi-db-sg"
-  description = "Allow inbound Postgres traffic strictly from the EC2 web server"
+  name        = "doketela-db-sg"
+  description = "Security group for Doketela PostgreSQL"
   vpc_id      = aws_vpc.main.id
 
+  # Direct PostgreSQL access from your Mac / IntelliJ
+  #
+  # Current public IP:
+  # 3.230.69.18
+  #
+  # /32 means ONLY this IP is allowed.
   ingress {
+    description = "PostgreSQL from development machine"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+
+    cidr_blocks = [
+      "3.230.69.18/32"
+    ]
+  }
+
+  # PostgreSQL access from EC2
+  ingress {
+    description     = "PostgreSQL from EC2"
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
-    security_groups = [aws_security_group.web_sg.id] # Only the EC2 instance can reach RDS
+    security_groups = [aws_security_group.web_sg.id]
   }
 
   egress {
@@ -233,19 +333,28 @@ resource "aws_security_group" "db_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "doketela-db-sg"
+  }
 }
 
-# Security Group for the Redis Cache Cluster
+# =========================================================
+# REDIS SECURITY GROUP
+# =========================================================
+
 resource "aws_security_group" "redis_sg" {
-  name        = "fastapi-redis-sg"
-  description = "Allow inbound Redis traffic strictly from the EC2 web server"
+  name        = "doketela-redis-sg"
+  description = "Security group for Doketela Redis"
   vpc_id      = aws_vpc.main.id
 
+  # Redis is only accessible from EC2
   ingress {
+    description     = "Redis from EC2"
     from_port       = 6379
     to_port         = 6379
     protocol        = "tcp"
-    security_groups = [aws_security_group.web_sg.id] # Only the EC2 instance can reach Redis
+    security_groups = [aws_security_group.web_sg.id]
   }
 
   egress {
@@ -254,129 +363,188 @@ resource "aws_security_group" "redis_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "doketela-redis-sg"
+  }
 }
 
-# ==============================================================================
-# 3. DATA SUBNET CLUSTERS & STORAGE PROVISIONS
-# ==============================================================================
+# =========================================================
+# RDS SUBNET GROUP
+# =========================================================
 
-# Database Placement Configuration
-resource "aws_db_subnet_group" "db_subnets" {
-  name       = "fastapi-db-subnet-group"
-  subnet_ids = [aws_subnet.private_1.id, aws_subnet.private_2.id]
-  tags       = { Name = "DB Subnet Group" }
+resource "aws_db_subnet_group" "postgres" {
+  name = "doketela-postgres-subnet-group"
+
+  subnet_ids = [
+    aws_subnet.private_1.id,
+    aws_subnet.private_2.id
+  ]
+
+  tags = {
+    Name = "doketela-postgres-subnet-group"
+  }
 }
 
-# Managed AWS RDS PostgreSQL Database Instance
+# =========================================================
+# POSTGRESQL RDS
+# =========================================================
+
 resource "aws_db_instance" "postgres" {
-  identifier             = "dokotela-db"
-  engine                 = "postgres"
-  engine_version         = "17"
-  instance_class         = "db.t4g.micro"
-  allocated_storage      = 20
-  db_name                = "postgres"
-  username               = "db_admin_musa"
-  password               = var.db_password # References the secure runtime variable
-  db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
+  identifier = "doketela-db"
+
+  engine         = "postgres"
+  engine_version = "17"
+
+  instance_class        = "db.t4g.micro"
+  allocated_storage     = 20
+  max_allocated_storage = 50
+  storage_type          = "gp3"
+  storage_encrypted     = true
+
+  db_name  = "postgres"
+  username = "db_admin_musa"
+  password = var.db_password
+
+  port = 5432
+
+  db_subnet_group_name   = aws_db_subnet_group.postgres.name
   vpc_security_group_ids = [aws_security_group.db_sg.id]
-  publicly_accessible    = false # Hidden from the open internet
-  skip_final_snapshot    = true
+
+  # Allows direct connection from IntelliJ/DataGrip.
+  # Security group restricts access to 3.230.69.18.
+  publicly_accessible = true
+
+  backup_retention_period = 0
+
+  skip_final_snapshot = true
+  deletion_protection = false
+
+  tags = {
+    Name        = "doketela-db"
+    Environment = "production"
+  }
 }
 
-# Redis Placement Configuration
-resource "aws_elasticache_subnet_group" "redis_subnets" {
-  name       = "fastapi-redis-subnet-group"
-  subnet_ids = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+# =========================================================
+# REDIS SUBNET GROUP
+# =========================================================
+
+resource "aws_elasticache_subnet_group" "redis" {
+  name = "doketela-redis-subnet-group"
+
+  subnet_ids = [
+    aws_subnet.private_1.id,
+    aws_subnet.private_2.id
+  ]
 }
 
-# Managed AWS ElastiCache for Redis Cluster
+# =========================================================
+# REDIS
+# =========================================================
+
 resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "dokotela-redis"
-  engine               = "redis"
-  node_type            = "cache.t4g.micro"
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  engine_version       = "7.0"
-  port                 = 6379
-  subnet_group_name    = aws_elasticache_subnet_group.redis_subnets.name
-  security_group_ids   = [aws_security_group.redis_sg.id]
+  cluster_id = "doketela-redis"
+
+  engine         = "redis"
+  engine_version = "7.1"
+
+  node_type = "cache.t4g.micro"
+
+  num_cache_nodes = 1
+  port            = 6379
+
+  subnet_group_name  = aws_elasticache_subnet_group.redis.name
+  security_group_ids = [aws_security_group.redis_sg.id]
+
+  tags = {
+    Name        = "doketela-redis"
+    Environment = "production"
+  }
 }
 
-# ==============================================================================
-# 4. COMPUTE & APPLICATION LAYER
-# ==============================================================================
+# =========================================================
+# EC2 SSH KEY
+# =========================================================
 
 resource "aws_key_pair" "deployer" {
-  key_name   = "fastapi-deployer-key"
+  key_name   = "doketela-deployer-key"
   public_key = file(pathexpand("~/.ssh/id_ed25519.pub"))
+
+  tags = {
+    Name = "doketela-deployer-key"
+  }
 }
 
-# EC2 Instance with Automated Bootstrapping Configuration
+# =========================================================
+# EC2
+# =========================================================
+
 resource "aws_instance" "web" {
-  ami                    = "ami-0c7217cdde317cfec" # Valid updated Amazon Linux 2023 AMI for us-east-1
-  instance_type          = "t3.micro"
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.web_sg.id]
-  key_name               = aws_key_pair.deployer.key_name # Fixed resource reference tracking string
-  iam_instance_profile   = aws_iam_instance_profile.ec2_ecr_pull.name
-  user_data              = <<-EOF
-              #!/bin/bash
-              dnf update -y
-              dnf install -y docker
-              systemctl start docker
-              systemctl enable docker
-              usermod -aG docker ec2-user
+  ami           = data.aws_ssm_parameter.ubuntu_ami.value
+  instance_type = "t3.micro"
 
-              # Install Docker Compose V2
-              mkdir -p /usr/local/lib/docker/cli-plugins/
-              curl -SL https://github.com -o /usr/local/lib/docker/cli-plugins/docker-compose
-              chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+  subnet_id = aws_subnet.public.id
 
-              mkdir -p /home/ec2-user/app
-              chown -R ec2-user:ec2-user /home/ec2-user/app
-              EOF
+  vpc_security_group_ids = [
+    aws_security_group.web_sg.id
+  ]
 
-  tags = { Name = "FastAPI-Docker-Server" }
+  key_name = aws_key_pair.deployer.key_name
+
+  # EC2 uses IAM role to pull from ECR.
+  # No AWS credentials are stored on the server.
+  iam_instance_profile = aws_iam_instance_profile.ec2_ecr_pull.name
+
+  user_data = <<-EOF
+    #!/bin/bash
+
+    set -e
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Update Ubuntu
+    apt-get update -y
+
+    # Install Docker and supporting tools
+    apt-get install -y \
+      docker.io \
+      docker-compose-v2 \
+      curl \
+      unzip
+
+    # Start Docker
+    systemctl enable docker
+    systemctl start docker
+
+    # Allow ubuntu user to use Docker
+    usermod -aG docker ubuntu
+
+    # Application directory
+    mkdir -p /home/ubuntu/app
+
+    # Correct ownership
+    chown -R ubuntu:ubuntu /home/ubuntu/app
+
+    # Restart Docker
+    systemctl restart docker
+  EOF
+
+  tags = {
+    Name        = "Doketela-Docker-Server"
+    Environment = "production"
+  }
 }
-resource "aws_eip" "fastapi_static_ip" {
+
+# =========================================================
+# ELASTIC IP
+# =========================================================
+
+resource "aws_eip" "doketela_static_ip" {
   domain   = "vpc"
   instance = aws_instance.web.id
 
   tags = {
-    Name = "fastapi-static-ip"
+    Name = "doketela-static-ip"
   }
-}
-
-# ==============================================================================
-# 5. VARIABLES & OUTBOUND OUTPUT STRINGS
-# ==============================================================================
-
-variable "db_password" {
-  type      = string
-  sensitive = true
-}
-
-output "public_ip" {
-  value       = aws_eip.fastapi_static_ip.public_ip
-  description = "The public IP of your FastAPI server"
-}
-
-output "rds_endpoint" {
-  value       = aws_db_instance.postgres.endpoint
-  description = "The connection endpoint string for your RDS instance"
-}
-
-output "redis_endpoint" {
-  value       = aws_elasticache_cluster.redis.cache_nodes[0].address
-  description = "The network connection address for your Redis cluster"
-}
-
-output "ecr_repository_url" {
-  value       = aws_ecr_repository.dokotela.repository_url
-  description = "ECR repository URL for Dokotela"
-}
-
-output "ecr_frontend_repository_url" {
-  value       = aws_ecr_repository.dokotela_frontend.repository_url
-  description = "ECR repository URL for Dokotela frontend"
 }
