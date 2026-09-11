@@ -37,6 +37,7 @@ services:
 
       - FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
       - APP_BASE_URL=${APP_BASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
 
     depends_on:
       flyway-migration:
