@@ -1,186 +1,218 @@
 name: Production Continuous Deployment
 
 on:
-  push:
-    branches:
-      - main
+push:
+branches:
+  - main
 
 permissions:
-  contents: read
+contents: read
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: dokotela
+AWS_REGION: us-east-1
+ECR_REPOSITORY: dokotela
+IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}-${{ github.run_attempt }}
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+deploy:
+runs-on: ubuntu-latest
+  
+  ```
+steps:
 
-    steps:
+  # --------------------------------------------------
+  # 1. Checkout source code
+  # --------------------------------------------------
+  - name: Checkout Codebase
+    uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 1. Checkout source code
-      # --------------------------------------------------
-      - name: Checkout Codebase
-        uses: actions/checkout@v4
+  # --------------------------------------------------
+  # 2. Configure AWS credentials
+  # --------------------------------------------------
+  - name: Configure AWS Credentials
+    uses: aws-actions/configure-aws-credentials@v4
+    with:
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      aws-region: ${{ env.AWS_REGION }}
 
-      # --------------------------------------------------
-      # 2. Configure AWS credentials on GitHub runner
-      # --------------------------------------------------
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+  # --------------------------------------------------
+  # 3. Login to Amazon ECR
+  # --------------------------------------------------
+  - name: Login to Amazon ECR
+    id: login-ecr
+    uses: aws-actions/amazon-ecr-login@v2
 
-      # --------------------------------------------------
-      # 3. Login GitHub runner to ECR
-      # --------------------------------------------------
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+  # --------------------------------------------------
+  # 4. Build and push Docker image
+  # --------------------------------------------------
+  - name: Build and Push Docker Image
+    env:
+      ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+    run: |
+      set -e
 
-      # --------------------------------------------------
-      # 4. Build Docker image and push to ECR
-      # --------------------------------------------------
-      - name: Build and Push Docker Image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}-${{ github.run_attempt }}
-        run: |
-          docker build \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            .
+      IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          docker push \
-            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      echo "========================================="
+      echo "Building Docker image"
+      echo "========================================="
+      echo "Image: $IMAGE_URI"
 
-      # --------------------------------------------------
-      # 5. Copy production files to EC2
-      # --------------------------------------------------
-      - name: Copy Production Files to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_PUBLIC_IP }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
-          source: "docker-compose.prod.yml,sql_versions"
-          target: "/home/ubuntu/app"
+      docker build \
+        -t "$IMAGE_URI" \
+        .
 
-      # --------------------------------------------------
-      # 6. Deploy application on EC2
-      # --------------------------------------------------
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v1.0.3
+      echo "========================================="
+      echo "Pushing Docker image"
+      echo "========================================="
 
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      docker push "$IMAGE_URI"
 
-          # IMPORTANT:
-          # This MUST match the tag used during the Docker push above.
-          IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+      echo "========================================="
+      echo "Docker image pushed successfully"
+      echo "========================================="
+      echo "$IMAGE_URI"
 
-          DB_HOST: ${{ secrets.AWS_RDS_ENDPOINT }}
-          DB_PASSWORD: ${{ secrets.AWS_RDS_PASSWORD }}
-          REDIS_HOST: ${{ secrets.AWS_REDIS_ENDPOINT }}
+  # --------------------------------------------------
+  # 5. Copy production files to EC2
+  # --------------------------------------------------
+  - name: Copy Production Files to EC2
+    uses: appleboy/scp-action@v0.1.7
+    with:
+      host: ${{ secrets.EC2_PUBLIC_IP }}
+      username: ubuntu
+      key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      port: 22
+      source: "docker-compose.prod.yml,sql_versions"
+      target: "/home/ubuntu/app"
 
-          PAYFAST_MERCHANT_ID: ${{ secrets.PAYFAST_MERCHANT_ID }}
-          PAYFAST_MERCHANT_KEY: ${{ secrets.PAYFAST_MERCHANT_KEY }}
-          PAYFAST_PASSPHRASE: ${{ secrets.PAYFAST_PASSPHRASE }}
-          PAYFAST_SANDBOX: ${{ secrets.PAYFAST_SANDBOX }}
+  # --------------------------------------------------
+  # 6. Deploy application to EC2
+  # --------------------------------------------------
+  - name: Deploy to EC2
+    uses: appleboy/ssh-action@v1.0.3
+    env:
+      ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
 
-          AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
-          AGORA_APP_CERTIFICATE: ${{ secrets.AGORA_APP_CERTIFICATE }}
+      DB_HOST: ${{ secrets.AWS_RDS_ENDPOINT }}
+      DB_PASSWORD: ${{ secrets.AWS_RDS_PASSWORD }}
+      REDIS_HOST: ${{ secrets.AWS_REDIS_ENDPOINT }}
 
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
-          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+      PAYFAST_MERCHANT_ID: ${{ secrets.PAYFAST_MERCHANT_ID }}
+      PAYFAST_MERCHANT_KEY: ${{ secrets.PAYFAST_MERCHANT_KEY }}
+      PAYFAST_PASSPHRASE: ${{ secrets.PAYFAST_PASSPHRASE }}
+      PAYFAST_SANDBOX: ${{ secrets.PAYFAST_SANDBOX }}
 
-        with:
-          host: ${{ secrets.EC2_PUBLIC_IP }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
+      AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
+      AGORA_APP_CERTIFICATE: ${{ secrets.AGORA_APP_CERTIFICATE }}
 
-          envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE,SECRET_KEY,APP_BASE_URL,FRONTEND_BASE_URL
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+      FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
 
-          script: |
-            set -e
+    with:
+      host: ${{ secrets.EC2_PUBLIC_IP }}
+      username: ubuntu
+      key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      port: 22
 
-            cd /home/ubuntu/app
+      envs: >-
+        ECR_REGISTRY,
+        IMAGE_TAG,
+        DB_HOST,
+        DB_PASSWORD,
+        REDIS_HOST,
+        PAYFAST_MERCHANT_ID,
+        PAYFAST_MERCHANT_KEY,
+        PAYFAST_PASSPHRASE,
+        PAYFAST_SANDBOX,
+        AGORA_APP_ID,
+        AGORA_APP_CERTIFICATE,
+        SECRET_KEY,
+        APP_BASE_URL,
+        FRONTEND_BASE_URL
 
-            echo "========================================="
-            echo "Creating production environment"
-            echo "========================================="
+      script: |
+        set -e
 
-            cat <<EOT > .env
+        cd /home/ubuntu/app
 
-            ECR_REPOSITORY_URL=$ECR_REGISTRY/dokotela
-            IMAGE_TAG=$IMAGE_TAG
+        echo "========================================="
+        echo "Creating production environment"
+        echo "========================================="
 
-            DB_HOST=$DB_HOST
-            DB_NAME=postgres
-            DB_USER=db_admin_musa
-            DB_PASSWORD=$DB_PASSWORD
+        cat <<EOT > .env
 
-            REDIS_HOST=$REDIS_HOST
+        ECR_REPOSITORY_URL=$ECR_REGISTRY/dokotela
+        IMAGE_TAG=$IMAGE_TAG
 
-            PAYFAST_MERCHANT_ID=$PAYFAST_MERCHANT_ID
-            PAYFAST_MERCHANT_KEY=$PAYFAST_MERCHANT_KEY
-            PAYFAST_PASSPHRASE=$PAYFAST_PASSPHRASE
-            PAYFAST_SANDBOX=$PAYFAST_SANDBOX
+        DB_HOST=$DB_HOST
+        DB_NAME=postgres
+        DB_USER=db_admin_musa
+        DB_PASSWORD=$DB_PASSWORD
 
-            AGORA_APP_ID=$AGORA_APP_ID
-            AGORA_APP_CERTIFICATE=$AGORA_APP_CERTIFICATE
+        REDIS_HOST=$REDIS_HOST
 
-            SECRET_KEY=$SECRET_KEY
-            APP_BASE_URL=$APP_BASE_URL
-            FRONTEND_BASE_URL=$FRONTEND_BASE_URL
+        PAYFAST_MERCHANT_ID=$PAYFAST_MERCHANT_ID
+        PAYFAST_MERCHANT_KEY=$PAYFAST_MERCHANT_KEY
+        PAYFAST_PASSPHRASE=$PAYFAST_PASSPHRASE
+        PAYFAST_SANDBOX=$PAYFAST_SANDBOX
 
-            EOT
+        AGORA_APP_ID=$AGORA_APP_ID
+        AGORA_APP_CERTIFICATE=$AGORA_APP_CERTIFICATE
 
-            chmod 600 .env
+        SECRET_KEY=$SECRET_KEY
+        APP_BASE_URL=$APP_BASE_URL
+        FRONTEND_BASE_URL=$FRONTEND_BASE_URL
 
-            echo "========================================="
-            echo "Logging Docker into Amazon ECR"
-            echo "========================================="
+        EOT
 
-            aws ecr get-login-password \
-              --region us-east-1 \
-              | docker login \
-                --username AWS \
-                --password-stdin 506199645375.dkr.ecr.us-east-1.amazonaws.com
+        chmod 600 .env
 
-            echo "========================================="
-            echo "Validating Docker Compose configuration"
-            echo "========================================="
+        echo "========================================="
+        echo "Deployment image"
+        echo "========================================="
+        echo "$ECR_REGISTRY/dokotela:$IMAGE_TAG"
 
-            docker compose \
-              -f docker-compose.prod.yml \
-              config --quiet
+        echo "========================================="
+        echo "Logging Docker into Amazon ECR"
+        echo "========================================="
 
-            echo "========================================="
-            echo "Pulling FastAPI image from ECR"
-            echo "========================================="
+        aws ecr get-login-password \
+          --region us-east-1 \
+          | docker login \
+            --username AWS \
+            --password-stdin 506199645375.dkr.ecr.us-east-1.amazonaws.com
 
-            docker compose \
-              -f docker-compose.prod.yml \
-              pull fastapi
+        echo "========================================="
+        echo "Validating Docker Compose configuration"
+        echo "========================================="
 
-            echo "========================================="
-            echo "Starting production services"
-            echo "========================================="
+        docker compose \
+          -f docker-compose.prod.yml \
+          config --quiet
 
-            docker compose \
-              -f docker-compose.prod.yml \
-              up -d --force-recreate
+        echo "========================================="
+        echo "Pulling FastAPI image from ECR"
+        echo "========================================="
 
-            echo "========================================="
-            echo "Deployment status"
-            echo "========================================="
+        docker compose \
+          -f docker-compose.prod.yml \
+          pull fastapi
 
-            docker compose \
-              -f docker-compose.prod.yml \
-              ps
+        echo "========================================="
+        echo "Starting production services"
+        echo "========================================="
+
+        docker compose \
+          -f docker-compose.prod.yml \
+          up -d --force-recreate
+
+        echo "========================================="
+        echo "Deployment status"
+        echo "========================================="
+
+        docker compose \
+          -f docker-compose.prod.yml \
+          ps
