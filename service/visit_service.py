@@ -151,16 +151,98 @@ class VisitService:
     # Get all visits for the logged-in user (patient or doctor)
     # ----------------------------------------------------------------------
     @staticmethod
+    def _doctor_name(db: Session, doctor_id: int) -> str:
+        doctor = db.query(Users).filter(Users.id == doctor_id).first()
+        if not doctor:
+            return ""
+        profile = (
+            db.query(DoctorProfiles)
+            .filter(DoctorProfiles.user_id == doctor_id)
+            .first()
+        )
+        return profile.full_legal_name if profile else doctor.username
+
+    @staticmethod
     def get_my_visits(db: Session, user_id: int):
-        return (
+        visits = (
             db.query(Visit)
             .filter(
                 ((Visit.patient_id == user_id) | (Visit.doctor_id == user_id))
                 & (Visit.scheduled_at >= datetime.now())
             )
-            .order_by(Visit.scheduled_at.desc())
+            .order_by(Visit.scheduled_at.asc())
             .all()
         )
+
+        return [
+            {
+                "id": visit.id,
+                "patient_id": visit.patient_id,
+                "scheduled_at": visit.scheduled_at,
+                "created_at": visit.created_at,
+                "video_provider": visit.video_provider,
+                "consultation_id": visit.consultation_id,
+                "doctor_id": visit.doctor_id,
+                "doctor_name": VisitService._doctor_name(db, visit.doctor_id),
+                "status": visit.status,
+                "channel_name": visit.channel_name,
+                "video_status": visit.video_status,
+            }
+            for visit in visits
+        ]
+
+    # ----------------------------------------------------------------------
+    # Get all upcoming appointments for a doctor, including patient details
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def get_doctor_appointments(db: Session, doctor_id: int):
+        doctor_profile = (
+            db.query(DoctorProfiles)
+            .filter(DoctorProfiles.user_id == doctor_id)
+            .first()
+        )
+
+        if not doctor_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Doctor profile not found",
+            )
+
+        # Only future appointments that are still scheduled.
+        visits = (
+            db.query(Visit)
+            .filter(
+                Visit.doctor_id == doctor_id,
+                Visit.status == "scheduled",
+                Visit.scheduled_at >= datetime.now(),
+            )
+            .order_by(Visit.scheduled_at.asc())
+            .all()
+        )
+
+        return visits
+
+    # ----------------------------------------------------------------------
+    # Get a single appointment for a doctor, including patient details
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def get_doctor_appointment(db: Session, doctor_id: int, visit_id: int):
+        visit = (
+            db.query(Visit)
+            .filter(
+                Visit.id == visit_id,
+                Visit.doctor_id == doctor_id,
+            )
+            .first()
+        )
+
+        if not visit:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Appointment not found",
+            )
+
+        return visit
 
     # ----------------------------------------------------------------------
     # Join a visit — returns Agora token if user is authorized & in window

@@ -1,0 +1,12 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is gitignored - never commit real secrets to source control.
+# Prefer passing db_password via the TF_VAR_db_password environment variable
+# (e.g. in CI) instead of writing it into a file at all.
+
+aws_region        = "us-east-1"
+project_name      = "dokotela"
+db_password       = "CHANGE_ME"
+dev_machine_cidr  = "203.0.113.10/32" # your current public IP, /32
+allowed_ssh_cidr  = "203.0.113.10/32" # restrict SSH to a known IP/VPN
+domain_name       = "" # e.g. "api.dokotela.com" - enables HTTPS via Nginx+Certbot
+admin_email       = "" # required if domain_name is set (Let's Encrypt contact)

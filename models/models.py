@@ -58,8 +58,10 @@ class ConsultationNotes(Base):
     consultation_id = Column(Integer, ForeignKey("health.consultations.id", ondelete="CASCADE"), nullable=False)
     author = Column(String(50), nullable=False)  # ai, doctor
     type = Column(String(100), nullable=False)  # SOAP_AI, SOAP_DOCTOR, diagnosis, etc.
-    notes = Column(Text, nullable=False)
+    ai_note = Column(Text, nullable=True)
+    doctor_note = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
 
 
 class Visit(Base):
@@ -256,8 +258,15 @@ class VisitResponse(BaseModel):
     consultation_id: int
     patient_id: int
     doctor_id: int
+    doctor_name: str | None = None
     scheduled_at: datetime
     status: str
+    created_at: datetime | None = None
+    video_provider: str | None = None
+    channel_name: str | None = None
+    video_status: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class JoinVisitResponse(BaseModel):
@@ -267,3 +276,94 @@ class JoinVisitResponse(BaseModel):
     uid: int
     video_provider: str
     join_url: str
+
+
+# -------------------------
+# Doctor Appointments API Models
+# -------------------------
+class PatientInfoResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DoctorAppointmentResponse(BaseModel):
+    id: int
+    consultation_id: int
+    patient_id: int
+    patient: PatientInfoResponse
+    scheduled_at: datetime
+    status: str
+    channel_name: str | None = None
+    video_provider: str | None = None
+    video_status: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DoctorAppointmentsListResponse(BaseModel):
+    appointments: List[DoctorAppointmentResponse]
+    total: int
+
+
+# -------------------------
+# Scheduling API Models
+# -------------------------
+class ScheduleAppointmentRequest(BaseModel):
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class AvailableAppointmentSlot(BaseModel):
+    doctor_id: int
+    doctor_name: str
+    open_at: datetime
+
+
+class SchedulePreviewResponse(BaseModel):
+    slots: List[AvailableAppointmentSlot]
+
+
+class ScheduleConfirmRequest(BaseModel):
+    consultation_id: int | None = None
+    doctor_id: int
+    open_at: datetime
+
+
+class ScheduleAppointmentResponse(BaseModel):
+    visit_id: int
+    consultation_id: int
+    doctor_id: int
+    doctor_name: str
+    scheduled_at: datetime
+    status: str
+
+
+# -------------------------
+# Consultation Notes API Models
+# -------------------------
+class ConsultationNoteResponse(BaseModel):
+    id: int
+    consultation_id: int
+    author: str
+    type: str
+    ai_note: str | None = None
+    doctor_note: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConsultationNotesListResponse(BaseModel):
+    notes: List[ConsultationNoteResponse]
+    total: int
+    page: int
+    page_size: int
+    has_more: bool
+
+
+class DoctorNoteCreateRequest(BaseModel):
+    type: str | None = Field(default=None, max_length=100)
+    doctor_note: str = Field(..., min_length=1)

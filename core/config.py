@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     AGORA_APP_ID: str = ""
     AGORA_APP_CERTIFICATE: str = ""
 
+    LLM_MODEL_NAME: str = "mlx-community/medgemma-27b-text-it-4bit"
+
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 20

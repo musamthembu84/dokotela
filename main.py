@@ -9,13 +9,19 @@ from routes.dokotela_chat import router as consultation
 from routes.payments import router as payments
 from routes.doctor_onboarding import router as doctor_onboarding
 from routes.admin import router as admin
+from routes.doctors import router as doctors
+from routes.scheduling import router as scheduling
+from routes.consultation_notes import router as consultation_notes
 from core.database import SessionLocal, engine
 from core.dependency import db_dependency as db_dependency
+from core.llm_service import load_llm
+from core.redis_client import redis_client
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from models import models
+from sqlalchemy import text
 import logging
 
 logger = logging.getLogger(__name__)
@@ -55,10 +61,60 @@ app.include_router(consultation)
 app.include_router(payments)
 app.include_router(doctor_onboarding)
 app.include_router(admin)
+app.include_router(doctors)
+app.include_router(scheduling)
+app.include_router(consultation_notes)
 
 models.Base.metadata.create_all(bind=engine)
 
+
+@app.on_event("startup")
+def warm_up_llm():
+    # Loads the LLM once at startup so the first chat request isn't slow.
+    logger.info("Warming up LLM...")
+    load_llm()
+    logger.info("LLM ready")
+
 user_dependency = Annotated[dict, Depends(get_current_user)]
+
+
+@app.get("/health", status_code=status.HTTP_200_OK, tags=["health"])
+async def health():
+    """
+    Unauthenticated health check for load balancers, Nginx and deployment
+    smoke tests. Verifies the process is up and its critical dependencies
+    (database, Redis) are reachable, so connectivity problems are caught
+    immediately instead of being discovered manually after the fact.
+    """
+    # Reaching this line at all proves the app process is running and
+    # serving requests - "app" is set unconditionally, before any
+    # dependency is checked, so it can't be masked by a DB/Redis outage.
+    checks = {"app": "ok", "database": "unknown", "redis": "unknown"}
+    healthy = True
+
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        healthy = False
+        checks["database"] = f"error: {exc}"
+        logger.error(f"Health check: database unreachable | error={exc}")
+
+    try:
+        redis_client.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        healthy = False
+        checks["redis"] = f"error: {exc}"
+        logger.error(f"Health check: redis unreachable | error={exc}")
+
+    payload = {"status": "ok" if healthy else "unhealthy", "checks": checks}
+
+    if not healthy:
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
+
+    return payload
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

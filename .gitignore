@@ -15,6 +15,12 @@ env/
 
 # Environment / secrets
 .env
+terraform/terraform.tfvars
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/crash.log
 
 # OS
 .DS_Store

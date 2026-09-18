@@ -11,10 +11,72 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: dokotela
+  # Unique per-run tag - ECR is IMMUTABLE so a reused tag would fail the push.
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}-${{ github.run_attempt }}
+  TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+  TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
 
 jobs:
+  # =========================================================
+  # Applies Terraform and exposes its outputs (Redis/RDS endpoints, EC2 IP,
+  # ECR URLs) to the deploy job below. Nothing downstream ever hand-types
+  # an endpoint - this is the fix for the Redis DNS/naming mismatch issues.
+  # =========================================================
+  infrastructure:
+    runs-on: ubuntu-latest
+
+    outputs:
+      ec2_public_ip: ${{ steps.tf-outputs.outputs.ec2_public_ip }}
+      rds_endpoint: ${{ steps.tf-outputs.outputs.rds_endpoint }}
+      redis_endpoint: ${{ steps.tf-outputs.outputs.redis_endpoint }}
+      ecr_backend_repository_url: ${{ steps.tf-outputs.outputs.ecr_backend_repository_url }}
+      app_url: ${{ steps.tf-outputs.outputs.app_url }}
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=dokotela/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${TF_STATE_LOCK_TABLE}"
+
+      - name: Terraform Apply
+        working-directory: terraform
+        env:
+          TF_VAR_db_password: ${{ secrets.AWS_RDS_PASSWORD }}
+          TF_VAR_domain_name: ${{ secrets.DOMAIN_NAME }}
+          TF_VAR_admin_email: ${{ secrets.ADMIN_EMAIL }}
+        run: terraform apply -auto-approve
+
+      - name: Read Terraform Outputs
+        id: tf-outputs
+        working-directory: terraform
+        run: |
+          echo "ec2_public_ip=$(terraform output -raw ec2_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "rds_endpoint=$(terraform output -raw rds_endpoint)" >> "$GITHUB_OUTPUT"
+          echo "redis_endpoint=$(terraform output -raw redis_endpoint)" >> "$GITHUB_OUTPUT"
+          echo "ecr_backend_repository_url=$(terraform output -raw ecr_backend_repository_url)" >> "$GITHUB_OUTPUT"
+          echo "app_url=$(terraform output -raw app_url)" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: infrastructure
     runs-on: ubuntu-latest
 
     steps:
@@ -60,10 +122,35 @@ jobs:
           echo "========================================="
           echo "$IMAGE_URI"
 
+      # Populates a known_hosts file with the real host key of the EC2
+      # instance so subsequent SSH/SCP steps can use strict host key
+      # checking instead of failing because ~/.ssh doesn't exist yet.
+      - name: Prepare SSH known_hosts
+        id: known-hosts
+        env:
+          EC2_PUBLIC_IP: ${{ needs.infrastructure.outputs.ec2_public_ip }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          for i in $(seq 1 10); do
+            if ssh-keyscan -H "$EC2_PUBLIC_IP" >> ~/.ssh/known_hosts 2>/dev/null; then
+              break
+            fi
+            echo "Waiting for SSH on $EC2_PUBLIC_IP to become available..."
+            sleep 10
+          done
+
+          {
+            echo "known_hosts<<EOF"
+            cat ~/.ssh/known_hosts
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Copy Production Files to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.EC2_PUBLIC_IP }}
+          host: ${{ needs.infrastructure.outputs.ec2_public_ip }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
@@ -74,9 +161,9 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          DB_HOST: ${{ secrets.AWS_RDS_ENDPOINT }}
+          DB_HOST: ${{ needs.infrastructure.outputs.rds_endpoint }}
           DB_PASSWORD: ${{ secrets.AWS_RDS_PASSWORD }}
-          REDIS_HOST: ${{ secrets.AWS_REDIS_ENDPOINT }}
+          REDIS_HOST: ${{ needs.infrastructure.outputs.redis_endpoint }}
           PAYFAST_MERCHANT_ID: ${{ secrets.PAYFAST_MERCHANT_ID }}
           PAYFAST_MERCHANT_KEY: ${{ secrets.PAYFAST_MERCHANT_KEY }}
           PAYFAST_PASSPHRASE: ${{ secrets.PAYFAST_PASSPHRASE }}
@@ -84,20 +171,36 @@ jobs:
           AGORA_APP_ID: ${{ secrets.AGORA_APP_ID }}
           AGORA_APP_CERTIFICATE: ${{ secrets.AGORA_APP_CERTIFICATE }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
-          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+          # Production URLs are derived from the deployed domain
+          # (Terraform's app_url output) unless explicitly overridden by a
+          # secret, so PayFast return/cancel/notify URLs are never
+          # accidentally left pointing at localhost.
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL || needs.infrastructure.outputs.app_url }}
+          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL || needs.infrastructure.outputs.app_url }}
 
         with:
-          host: ${{ secrets.EC2_PUBLIC_IP }}
+          host: ${{ needs.infrastructure.outputs.ec2_public_ip }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
+          known_hosts: ${{ steps.known-hosts.outputs.known_hosts }}
           envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE,SECRET_KEY,APP_BASE_URL,FRONTEND_BASE_URL
 
           script: |
             set -e
 
             cd /home/ubuntu/app
+
+            echo "========================================="
+            echo "Validating required environment variables"
+            echo "========================================="
+
+            for var in DB_HOST DB_PASSWORD REDIS_HOST PAYFAST_MERCHANT_ID PAYFAST_MERCHANT_KEY PAYFAST_PASSPHRASE PAYFAST_SANDBOX AGORA_APP_ID AGORA_APP_CERTIFICATE SECRET_KEY APP_BASE_URL FRONTEND_BASE_URL; do
+              if [ -z "${!var}" ]; then
+                echo "ERROR: required variable $var is empty. Aborting deploy."
+                exit 1
+              fi
+            done
 
             echo "========================================="
             echo "Creating production environment"
@@ -142,7 +245,7 @@ jobs:
               --region us-east-1 \
               | docker login \
                 --username AWS \
-                --password-stdin 506199645375.dkr.ecr.us-east-1.amazonaws.com
+                --password-stdin "$ECR_REGISTRY"
 
             echo "========================================="
             echo "Validating Docker Compose configuration"
@@ -166,7 +269,7 @@ jobs:
 
             docker compose \
               -f docker-compose.prod.yml \
-              up -d --force-recreate
+              up -d --force-recreate --wait
 
             echo "========================================="
             echo "Deployment status"
@@ -175,3 +278,44 @@ jobs:
             docker compose \
               -f docker-compose.prod.yml \
               ps
+
+      # Fails the workflow immediately if the deployment is broken, instead
+      # of the team discovering Redis/DB/API connectivity problems manually
+      # after the fact.
+      - name: Smoke Test - API, Database, Redis
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ needs.infrastructure.outputs.ec2_public_ip }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: 22
+          known_hosts: ${{ steps.known-hosts.outputs.known_hosts }}
+          script: |
+            set -e
+            cd /home/ubuntu/app
+
+            echo "========================================="
+            echo "Smoke test: FastAPI container health"
+            echo "========================================="
+            timeout 60 bash -c 'until docker compose -f docker-compose.prod.yml ps fastapi | grep -q "healthy"; do sleep 3; done'
+
+            echo "========================================="
+            echo "Smoke test: API reachable over HTTP"
+            echo "========================================="
+            curl -f -sS http://127.0.0.1:8000/health
+
+            echo "========================================="
+            echo "Smoke test: Database connectivity"
+            echo "========================================="
+            docker run --rm --network host postgres:17-alpine \
+              pg_isready -h "$(grep '^DB_HOST=' .env | cut -d= -f2)" -p 5432
+
+            echo "========================================="
+            echo "Smoke test: Redis connectivity"
+            echo "========================================="
+            docker run --rm --network host redis:7-alpine \
+              redis-cli -h "$(grep '^REDIS_HOST=' .env | cut -d= -f2)" -p 6379 ping
+
+            echo "========================================="
+            echo "All smoke tests passed"
+            echo "========================================="

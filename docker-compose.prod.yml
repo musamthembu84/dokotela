@@ -10,34 +10,51 @@ services:
       - ./sql_versions:/flyway/sql:ro
 
     environment:
-      - FLYWAY_URL=jdbc:postgresql://${DB_HOST}:5432/${DB_NAME}
-      - FLYWAY_USER=${DB_USER}
-      - FLYWAY_PASSWORD=${DB_PASSWORD}
+      # ${VAR:?message} fails the deploy immediately (instead of silently
+      # starting with an empty value) if a required variable is missing
+      # from .env - this is what "Docker Compose: Environment variables
+      # were missing" should have caught before Flyway/FastAPI ever started.
+      - FLYWAY_URL=jdbc:postgresql://${DB_HOST:?DB_HOST is required}:5432/${DB_NAME:?DB_NAME is required}
+      - FLYWAY_USER=${DB_USER:?DB_USER is required}
+      - FLYWAY_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
       - FLYWAY_SCHEMAS=health
 
   fastapi:
-    image: ${ECR_REPOSITORY_URL}:${IMAGE_TAG}
+    image: ${ECR_REPOSITORY_URL:?ECR_REPOSITORY_URL is required}:${IMAGE_TAG:?IMAGE_TAG is required}
 
     container_name: production-fastapi-app
 
+    restart: unless-stopped
+
+    # Bound to localhost only - Nginx (installed by the Terraform EC2
+    # bootstrap script) terminates HTTP/HTTPS on 80/443 and reverse proxies
+    # to this port. The container is never exposed directly on the public
+    # interface.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
     environment:
-      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}
-      - REDIS_URL=redis://${REDIS_HOST}:6379/0
+      - DATABASE_URL=postgresql://${DB_USER:?DB_USER is required}:${DB_PASSWORD:?DB_PASSWORD is required}@${DB_HOST:?DB_HOST is required}:5432/${DB_NAME:?DB_NAME is required}
+      - REDIS_URL=redis://${REDIS_HOST:?REDIS_HOST is required}:6379/0
 
-      - PAYFAST_MERCHANT_ID=${PAYFAST_MERCHANT_ID}
-      - PAYFAST_MERCHANT_KEY=${PAYFAST_MERCHANT_KEY}
-      - PAYFAST_PASSPHRASE=${PAYFAST_PASSPHRASE}
-      - PAYFAST_SANDBOX=${PAYFAST_SANDBOX}
+      - PAYFAST_MERCHANT_ID=${PAYFAST_MERCHANT_ID:?PAYFAST_MERCHANT_ID is required}
+      - PAYFAST_MERCHANT_KEY=${PAYFAST_MERCHANT_KEY:?PAYFAST_MERCHANT_KEY is required}
+      - PAYFAST_PASSPHRASE=${PAYFAST_PASSPHRASE:?PAYFAST_PASSPHRASE is required}
+      - PAYFAST_SANDBOX=${PAYFAST_SANDBOX:?PAYFAST_SANDBOX is required}
 
-      - AGORA_APP_ID=${AGORA_APP_ID}
-      - AGORA_APP_CERTIFICATE=${AGORA_APP_CERTIFICATE}
+      - AGORA_APP_ID=${AGORA_APP_ID:?AGORA_APP_ID is required}
+      - AGORA_APP_CERTIFICATE=${AGORA_APP_CERTIFICATE:?AGORA_APP_CERTIFICATE is required}
 
-      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
-      - APP_BASE_URL=${APP_BASE_URL}
-      - SECRET_KEY=${SECRET_KEY}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:?FRONTEND_BASE_URL is required}
+      - APP_BASE_URL=${APP_BASE_URL:?APP_BASE_URL is required}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+
+    healthcheck:
+      test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
     depends_on:
       flyway-migration:

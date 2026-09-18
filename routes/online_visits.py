@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, status
 from core.dependency import db_dependency
 from core.jwt_utils import get_current_user
 from service.visit_service import VisitService
-from models.models import CreateVisitRequest, JoinVisitResponse
+from models.models import CreateVisitRequest, JoinVisitResponse, VisitResponse
 
 token_dep = Annotated[dict, Depends(get_current_user)]
 
@@ -25,7 +25,7 @@ async def create_visit(
     )
 
 
-@router.get("/", status_code=status.HTTP_200_OK)
+@router.get("/", status_code=status.HTTP_200_OK, response_model=list[VisitResponse])
 async def get_my_visits(
         db: db_dependency,
         token: token_dep,

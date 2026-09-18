@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from models.models import Payments, Consultations, ConsultationNotes
 from core.config import settings
 from core.session_store import get_session
-from core.intake_ai import mock_summary
+from core.llm_service import generate_llm_summary
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class PaymentService:
         if session_id:
             session_data = get_session(session_id)
             if session_data and session_data.get("messages"):
-                ai_summary = mock_summary(session_data["messages"])
+                ai_summary = generate_llm_summary(session_data["messages"])
                 summary_text = ai_summary.get("summary")
                 logger.info("AI summary loaded for session %s: %s", session_id, summary_text)
             else:
@@ -167,7 +167,7 @@ class PaymentService:
                 consultation_id=consultation.id,
                 author="ai",
                 type="SOAP_AI",
-                notes=summary_text,
+                ai_note=summary_text,
             )
             db.add(note)
             logger.info("ConsultationNote created for consultation_id=%s", consultation.id)
