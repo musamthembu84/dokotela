@@ -286,7 +286,6 @@ resource "aws_iam_instance_profile" "ec2_ecr_pull" {
 # user_data) terminates TLS and reverse-proxies to the containers on
 # localhost. This closes the "application exposed directly on :3000/:8000"
 # gap.
-
 resource "aws_security_group" "web_sg" {
   name        = "${var.project_name}-web-sg"
   description = "Security group for ${var.project_name} application EC2"
@@ -301,7 +300,7 @@ resource "aws_security_group" "web_sg" {
     cidr_blocks = [var.allowed_ssh_cidr]
   }
 
-  # HTTP (redirects to HTTPS once Nginx/Certbot are configured)
+  # HTTP
   ingress {
     description = "HTTP"
     from_port   = 80
@@ -315,6 +314,24 @@ resource "aws_security_group" "web_sg" {
     description = "HTTPS"
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Frontend - temporary direct public access
+  ingress {
+    description = "Frontend"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Backend API - temporary direct public access
+  ingress {
+    description = "Backend API"
+    from_port   = 8000
+    to_port     = 8000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }

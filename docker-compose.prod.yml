@@ -31,7 +31,7 @@ services:
     # to this port. The container is never exposed directly on the public
     # interface.
     ports:
-      - "127.0.0.1:8000:8000"
+      - "0.0.0.0:8000:8000"
 
     environment:
       - DATABASE_URL=postgresql://${DB_USER:?DB_USER is required}:${DB_PASSWORD:?DB_PASSWORD is required}@${DB_HOST:?DB_HOST is required}:5432/${DB_NAME:?DB_NAME is required}
