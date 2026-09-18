@@ -48,6 +48,9 @@ services:
       - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:?FRONTEND_BASE_URL is required}
       - APP_BASE_URL=${APP_BASE_URL:?APP_BASE_URL is required}
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+      - LLM_SERVICE_URL=${LLM_SERVICE_URL:?LLM_SERVICE_URL is required}
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:?LLM_MODEL_NAME is required}
+      - RUNPOD_API_KEY=${RUNPOD_API_KEY:?RUNPOD_API_KEY is required}
 
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]

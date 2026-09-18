@@ -30,7 +30,11 @@ class Settings(BaseSettings):
     AGORA_APP_ID: str = ""
     AGORA_APP_CERTIFICATE: str = ""
 
-    LLM_MODEL_NAME: str = "mlx-community/medgemma-27b-text-it-4bit"
+    # Remote GPU inference service
+    LLM_SERVICE_URL: str
+    LLM_MODEL_NAME: str = "google/medgemma-27b-text-it"
+    RUNPOD_API_KEY: str
+    #LLM_MODEL_NAME: str = "mlx-community/medgemma-27b-text-it-4bit"
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
