@@ -123,7 +123,7 @@ user_dependency = Annotated[
 async def health():
     """
     Unauthenticated health check for load balancers,
-    Nginx and deployment smoke tests.
+    Nginx and deployment smoke tests. all test
 
     Verifies that the application, database and Redis
     are reachable.
