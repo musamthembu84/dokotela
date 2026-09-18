@@ -7,6 +7,11 @@ aws_region        = "us-east-1"
 project_name      = "dokotela"
 db_password       = "CHANGE_ME"
 dev_machine_cidr  = "203.0.113.10/32" # your current public IP, /32
-allowed_ssh_cidr  = "203.0.113.10/32" # restrict SSH to a known IP/VPN
+# GitHub Actions hosted runners do NOT have a fixed IP, so restricting SSH
+# to a single CIDR here will make the deploy workflow's SCP/SSH steps time
+# out (dial tcp ...:22: i/o timeout). Keep this "0.0.0.0/0" (access is still
+# protected by SSH key auth) unless you deploy via a self-hosted runner or
+# VPN with a known, stable egress IP.
+allowed_ssh_cidr  = "0.0.0.0/0"
 domain_name       = "" # e.g. "api.dokotela.com" - enables HTTPS via Nginx+Certbot
 admin_email       = "" # required if domain_name is set (Let's Encrypt contact)

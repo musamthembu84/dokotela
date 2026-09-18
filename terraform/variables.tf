@@ -23,7 +23,7 @@ variable "dev_machine_cidr" {
 }
 
 variable "allowed_ssh_cidr" {
-  description = "CIDR block allowed to SSH into the EC2 instance. Restrict this to your office/VPN IP in production."
+  description = "CIDR block allowed to SSH into the EC2 instance. Keep as 0.0.0.0/0 if the GitHub Actions deploy workflow uses hosted runners (they have no fixed IP - a narrower CIDR here causes SCP/SSH steps to time out). Only restrict this if you deploy exclusively via a self-hosted runner or VPN with a known, stable egress IP."
   type        = string
   default     = "0.0.0.0/0"
 }
