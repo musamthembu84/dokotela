@@ -90,6 +90,13 @@ def generate_llm_reply(
         url,
     )
 
+    logger.info(
+        "LLM request: messages=%d, chars=%d, max_tokens=%d",
+        len(chat_messages),
+        sum(len(m["content"]) for m in chat_messages),
+        max_tokens,
+    )
+
     try:
         with httpx.Client(timeout=180.0) as client:
             response = client.post(
