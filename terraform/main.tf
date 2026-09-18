@@ -8,26 +8,10 @@ terraform {
     }
   }
 
-  # Remote state so CI/CD can run `terraform output` and consume real
-  # infrastructure values (Redis/RDS endpoints, EC2 IP, ECR URLs) instead of
-  # engineers manually typing/copy-pasting them into GitHub Secrets.
-  #
-  # Bootstrap once, before first `terraform init` (values below are examples):
-  #   aws s3api create-bucket --bucket dokotela-terraform-state --region us-east-1
-  #   aws s3api put-bucket-versioning --bucket dokotela-terraform-state \
-  #     --versioning-configuration Status=Enabled
-  #   aws dynamodb create-table --table-name dokotela-terraform-locks \
-  #     --attribute-definitions AttributeName=LockID,AttributeType=S \
-  #     --key-schema AttributeName=LockID,KeyType=HASH \
-  #     --billing-mode PAY_PER_REQUEST
-  #
-  # Then initialize with:
-  #   terraform init \
-  #     -backend-config="bucket=dokotela-terraform-state" \
-  #     -backend-config="key=dokotela/terraform.tfstate" \
-  #     -backend-config="region=us-east-1" \
-  #     -backend-config="dynamodb_table=dokotela-terraform-locks"
-  backend "s3" {}
+  # Local state, applied manually from your machine (as today). After
+  # `terraform apply`, run `terraform/sync-outputs-to-github-secrets.sh` to
+  # push the real Redis/RDS endpoints, EC2 IP and ECR URLs into GitHub
+  # Actions secrets so the deploy workflow never has them hand-typed.
 }
 
 provider "aws" {

@@ -1,21 +1,7 @@
 # Dokotela Terraform
 
-## One-time backend bootstrap (before first `terraform init`)
-
-State is stored remotely in S3 (with DynamoDB locking) so CI/CD can reliably
-run `terraform output` and consume real infrastructure values instead of
-engineers manually copy-pasting endpoints/IPs into GitHub Secrets.
-
-```bash
-aws s3api create-bucket --bucket dokotela-terraform-state --region us-east-1
-aws s3api put-bucket-versioning --bucket dokotela-terraform-state \
-  --versioning-configuration Status=Enabled
-
-aws dynamodb create-table --table-name dokotela-terraform-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST
-```
+State is local (like today) - applied manually from your machine, no S3
+bucket or remote backend required.
 
 ## Init / plan / apply
 
@@ -23,32 +9,38 @@ aws dynamodb create-table --table-name dokotela-terraform-locks \
 cd terraform
 cp terraform.tfvars.example terraform.tfvars   # fill in real values, never commit it
 
-terraform init \
-  -backend-config="bucket=dokotela-terraform-state" \
-  -backend-config="key=dokotela/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
-  -backend-config="dynamodb_table=dokotela-terraform-locks"
-
+terraform init
 terraform plan
 terraform apply
 ```
 
 Prefer `TF_VAR_db_password` (and `TF_VAR_domain_name`, `TF_VAR_admin_email`)
-environment variables over putting secrets in `terraform.tfvars`.
+environment variables over putting secrets into `terraform.tfvars`.
 
-## Consuming outputs (never type endpoints manually)
+## Syncing outputs to GitHub Actions (never type endpoints manually)
+
+After every `terraform apply`, run:
 
 ```bash
-terraform output -raw redis_endpoint
-terraform output -raw rds_endpoint
-terraform output -raw ec2_public_ip
-terraform output -raw ecr_backend_repository_url
+./sync-outputs-to-github-secrets.sh
 ```
 
-The GitHub Actions deploy workflow (`.github/workflows/deploy.yml`) runs
-`terraform apply` and reads these outputs directly, so the Redis/RDS
-hostnames and EC2 IP used at deploy time are always the real Terraform-owned
-values.
+This reads `terraform output` directly and pushes the real values into
+GitHub Actions secrets via the `gh` CLI:
+
+| Secret                         | Terraform output               |
+|---------------------------------|---------------------------------|
+| `EC2_PUBLIC_IP`                  | `ec2_public_ip`                 |
+| `AWS_RDS_ENDPOINT`               | `rds_endpoint`                   |
+| `AWS_REDIS_ENDPOINT`             | `redis_endpoint`                 |
+| `ECR_BACKEND_REPOSITORY_URL`     | `ecr_backend_repository_url`     |
+| `ECR_FRONTEND_REPOSITORY_URL`    | `ecr_frontend_repository_url`    |
+| `APP_URL`                        | `app_url`                        |
+
+Requires `gh auth login` once. The deploy workflow
+(`.github/workflows/deploy.yml`) then reads these secrets directly, so the
+Redis/RDS hostnames and EC2 IP used at deploy time always match what
+Terraform actually created - no more doketela/dokotela typos.
 
 ## HTTPS
 
@@ -64,6 +56,7 @@ automatically. Application ports 3000/8000 are not exposed publicly - only
 terraform destroy
 ```
 
-Since state is remote, `destroy`/`apply` can be run repeatably without
-losing track of what's deployed - spin the environment up for a deploy or
-debugging session and tear it down afterwards.
+Run this after a deploy/debugging session to avoid paying for idle
+infrastructure. Since `terraform.tfstate` stays on your machine, keep it
+somewhere safe (it's gitignored) - if you lose it, `terraform apply` again
+from a clean state will try to recreate everything from scratch.
