@@ -65,7 +65,7 @@ def tokenize_function(examples):
 
 tokenized_datasets = dataset.map(
     tokenize_function,
-    batched=False
+    batched=True
 )
 
 # Rename label column if needed
