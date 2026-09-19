@@ -38,6 +38,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "https://dokotela-ai.com",
+        "https://www.dokotela-ai.com",
         "http://98.95.246.110:3000",
     ],
     allow_credentials=True,
