@@ -1,5 +1,7 @@
 import uuid
 from datetime import timedelta, datetime
+from zoneinfo import ZoneInfo
+SAST = ZoneInfo("Africa/Johannesburg")
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -168,7 +170,7 @@ class VisitService:
             db.query(Visit)
             .filter(
                 ((Visit.patient_id == user_id) | (Visit.doctor_id == user_id))
-                & (Visit.scheduled_at >= datetime.now())
+                & (Visit.scheduled_at >= datetime.now(SAST).replace(tzinfo=None))
             )
             .order_by(Visit.scheduled_at.asc())
             .all()
@@ -214,7 +216,7 @@ class VisitService:
             .filter(
                 Visit.doctor_id == doctor_id,
                 Visit.status == "scheduled",
-                Visit.scheduled_at >= datetime.now(),
+                Visit.scheduled_at >= datetime.now(SAST).replace(tzinfo=None),
             )
             .order_by(Visit.scheduled_at.asc())
             .all()
@@ -269,7 +271,7 @@ class VisitService:
                 detail="Visit is not in a joinable state",
             )
 
-        now = datetime.now()
+        now = datetime.now(SAST).replace(tzinfo=None)
         allowed_before = visit.scheduled_at - timedelta(minutes=10)
         allowed_after = visit.scheduled_at + timedelta(hours=1)
 

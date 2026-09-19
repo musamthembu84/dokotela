@@ -1,5 +1,7 @@
 import uuid
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+SAST = ZoneInfo("Africa/Johannesburg")
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -161,7 +163,10 @@ class SchedulingService:
             )
 
         start_index = SchedulingService._rotation_start_index(db, doctors)
-        base_earliest_start = datetime.now() + timedelta(minutes=MIN_BOOKING_BUFFER_MINUTES)
+        base_earliest_start = (
+            datetime.now(SAST).replace(tzinfo=None)
+            + timedelta(minutes=MIN_BOOKING_BUFFER_MINUTES)
+        )
         doctor_count = len(doctors)
 
         # Track each doctor's own search cursor so that if we need to loop
