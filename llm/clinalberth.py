@@ -58,7 +58,7 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 def tokenize_function(examples):
     return tokenizer(
         examples["text"],
-        truncation=True,
+        truncation=False,
         padding="max_length",
         max_length=MAX_LENGTH,
     )
