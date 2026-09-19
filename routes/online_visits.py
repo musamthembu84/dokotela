@@ -40,5 +40,5 @@ async def join_visit(
         token: token_dep,
 ):
     response = VisitService.join_visit(db=db, user_id=token["id"], visit_id=visit_id)
-     response["join_url"] = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/call/{visit_id}"
+    response["join_url"] = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/call/{visit_id}"
     return response
