@@ -1,4 +1,5 @@
 import uuid
+import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 SAST = ZoneInfo("Africa/Johannesburg")
@@ -13,6 +14,10 @@ from models.models import (
     Visit,
     Consultations,
 )
+from service.email_service import EmailService
+
+logger = logging.getLogger(__name__)
+
 
 # How far ahead we search for an open slot. Doctor availability is a
 # recurring weekly pattern that applies for the whole year, so we only
@@ -275,11 +280,29 @@ class SchedulingService:
         db.commit()
         db.refresh(visit)
 
+        patient = db.get(Users, patient_id)
+        doctor_name = SchedulingService._doctor_name(db, doctor)
+        scheduled_at_display = visit.scheduled_at.strftime("%A, %d %B %Y at %H:%M") + " (SAST)"
+
+        if patient:
+            EmailService.send_booking_confirmation_emails(
+                patient_email=patient.email,
+                patient_name=patient.username,
+                doctor_email=doctor.email,
+                doctor_name=doctor_name,
+                scheduled_at_display=scheduled_at_display,
+            )
+        else:
+            logger.warning(
+                "Could not send booking confirmation emails — patient_id=%s not found",
+                patient_id,
+            )
+
         return {
             "visit_id": visit.id,
             "consultation_id": consultation.id,
             "doctor_id": doctor.id,
-            "doctor_name": SchedulingService._doctor_name(db, doctor),
+            "doctor_name": doctor_name,
             "scheduled_at": visit.scheduled_at,
             "status": visit.status,
         }

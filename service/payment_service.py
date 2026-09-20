@@ -4,10 +4,11 @@ import urllib.parse
 import requests
 from sqlalchemy.orm import Session
 
-from models.models import Payments, Consultations, ConsultationNotes
+from models.models import Payments, Consultations, ConsultationNotes, Users
 from core.config import settings
 from core.session_store import get_session
 from core.llm_service import generate_llm_summary
+from service.email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,21 @@ class PaymentService:
         db.refresh(consultation)
         logger.info("mark_payment_completed: commit done, status=%s reference=%s", payment.status, payment.payment_reference)
         logger.info("Consultation created: id=%s patient_id=%s payment_id=%s", consultation.id, consultation.patient_id, consultation.payment_id)
+
+        patient = db.get(Users, payment.user_id)
+        if patient:
+            EmailService.send_payment_success_email(
+                to_email=patient.email,
+                username=patient.username,
+                amount=f"{payment.amount:.2f}",
+                currency=payment.currency,
+                payment_reference=payment.payment_reference,
+            )
+        else:
+            logger.warning(
+                "Could not send payment success email — user_id=%s not found",
+                payment.user_id,
+            )
 
         return payment
 

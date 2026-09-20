@@ -119,6 +119,7 @@ jobs:
           # never accidentally left pointing at localhost.
           APP_BASE_URL: ${{ secrets.APP_BASE_URL || secrets.APP_URL }}
           FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL || secrets.APP_URL }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
 
         with:
           host: ${{ secrets.EC2_PUBLIC_IP }}
@@ -126,7 +127,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
           known_hosts: ${{ steps.known-hosts.outputs.known_hosts }}
-          envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,LLM_SERVICE_URL,LLM_MODEL_NAME,RUNPOD_API_KEY,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE,SECRET_KEY,APP_BASE_URL,FRONTEND_BASE_URL
+          envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,LLM_SERVICE_URL,LLM_MODEL_NAME,RUNPOD_API_KEY,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE,SECRET_KEY,APP_BASE_URL,FRONTEND_BASE_URL,SMTP_PASSWORD
 
           script: |
             set -e
@@ -137,7 +138,7 @@ jobs:
             echo "Validating required environment variables"
             echo "========================================="
 
-            for var in DB_HOST DB_PASSWORD REDIS_HOST PAYFAST_MERCHANT_ID PAYFAST_MERCHANT_KEY PAYFAST_PASSPHRASE PAYFAST_SANDBOX AGORA_APP_ID AGORA_APP_CERTIFICATE SECRET_KEY APP_BASE_URL FRONTEND_BASE_URL; do
+            for var in DB_HOST DB_PASSWORD REDIS_HOST PAYFAST_MERCHANT_ID PAYFAST_MERCHANT_KEY PAYFAST_PASSPHRASE PAYFAST_SANDBOX AGORA_APP_ID AGORA_APP_CERTIFICATE SECRET_KEY APP_BASE_URL FRONTEND_BASE_URL SMTP_PASSWORD; do
               if [ -z "${!var}" ]; then
                 echo "ERROR: required variable $var is empty. Aborting deploy."
                 exit 1
@@ -174,6 +175,12 @@ jobs:
             SECRET_KEY=$SECRET_KEY
             APP_BASE_URL=$APP_BASE_URL
             FRONTEND_BASE_URL=$FRONTEND_BASE_URL
+
+            SMTP_HOST=kregg.aserv.co.za
+            SMTP_PORT=465
+            SMTP_USERNAME=admin@dokotela-ai.com
+            SMTP_PASSWORD=$SMTP_PASSWORD
+            SMTP_FROM=admin@dokotela-ai.com
             EOT
 
             chmod 600 .env

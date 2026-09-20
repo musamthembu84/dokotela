@@ -21,11 +21,11 @@ class Settings(BaseSettings):
     APP_BASE_URL: str
     FRONTEND_BASE_URL: str
 
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USERNAME: str = ""
+    SMTP_HOST: str = "kregg.aserv.co.za"
+    SMTP_PORT: int = 465
+    SMTP_USERNAME: str = "admin@dokotela-ai.com"
     SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = "noreply@doketela.com"
+    SMTP_FROM: str = "admin@dokotela-ai.com"
 
     AGORA_APP_ID: str = ""
     AGORA_APP_CERTIFICATE: str = ""

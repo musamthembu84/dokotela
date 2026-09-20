@@ -10,6 +10,7 @@ from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 from core.dependency import db_dependency
 from core.jwt_utils import get_current_user, authorize_user_access
 from models.models import Users, UserRequest, UserResponse, OnboardingTokens
+from service.email_service import EmailService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -62,6 +63,10 @@ async def create_user(db: db_dependency, create_user_request: UserRequest):
             db.refresh(tokens)
 
         print(f"User created: {create_user_model.username}")
+
+        EmailService.send_welcome_email(
+            create_user_model.email, create_user_model.username
+        )
 
         return UserResponse.model_validate(create_user_model)
     except ValueError as e:
