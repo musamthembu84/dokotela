@@ -38,7 +38,12 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 20
+    # 20 minutes was too short: patients/doctors often schedule a visit well
+    # ahead of time and only come back at the appointed slot to join, so a
+    # short-lived token with no refresh flow would silently expire and
+    # produce a hard 401 on /visits/{id}/join. Bump this to a full day so a
+    # normal login stays valid for the whole session (book -> wait -> join).
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),

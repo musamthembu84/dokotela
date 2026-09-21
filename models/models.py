@@ -182,7 +182,7 @@ class PaymentResponse(BaseModel):
 
 class CheckoutRequest(BaseModel):
     amount: Decimal
-    consultation_id: str
+    consultation_id: str | None = None
 
 
 class CheckoutResponse(BaseModel):
