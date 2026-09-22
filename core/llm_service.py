@@ -9,12 +9,31 @@ OpenAI-compatible /v1/chat/completions API.
 import json
 import logging
 import re
+import time
 
 import httpx
 
 from core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# RunPod bills for GPU worker time, and a timeout after this long usually
+# means a job is genuinely still running/cold-starting on a paid worker -
+# retrying it would risk starting a second billed worker on top of the
+# first. So we only retry cheap, instant failures (a dropped connection,
+# or an immediate 5xx from the queue before any worker was billed); a
+# real timeout is raised straight away instead of being retried.
+LLM_MAX_ATTEMPTS = 2
+LLM_RETRY_BACKOFF_SECONDS = 2.0
+
+
+class LLMWarmingUpError(RuntimeError):
+    """
+    Raised when the remote LLM inference service could not be reached in
+    time, most likely because the RunPod worker is still cold-starting.
+    Callers can use this to show a friendly "still warming up, please
+    try again shortly" message instead of a generic failure.
+    """
 
 
 SYSTEM_PROMPT = (
@@ -97,33 +116,88 @@ def generate_llm_reply(
         max_tokens,
     )
 
-    try:
-        with httpx.Client(timeout=180.0) as client:
-            response = client.post(
-                url,
-                headers=headers,
-                json=payload,
+    # RunPod serverless workers scale to zero when idle, so the first
+    # request after a period of inactivity has to wait for a cold start
+    # (observed: 3-5 minutes) before inference even begins. A short
+    # read timeout here would abandon the request mid cold-start, so we
+    # give it a generous ceiling (comfortably under the reverse proxy's
+    # own proxy_read_timeout) while keeping connect/write timeouts tight
+    # so genuine connectivity failures still fail fast.
+    timeout = httpx.Timeout(connect=10.0, write=10.0, pool=10.0, read=280.0)
+
+    last_exc: Exception | None = None
+
+    for attempt in range(1, LLM_MAX_ATTEMPTS + 1):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
+
+            response.raise_for_status()
+            last_exc = None
+            break
+
+        except httpx.TimeoutException as exc:
+            # A timeout this long almost certainly means a worker was
+            # already spun up and is mid cold-start/inference (i.e.
+            # already being billed). Retrying here would risk paying for
+            # a second worker on top of the first, so we fail fast
+            # instead of looping.
+            logger.warning(
+                "LLM inference request timed out after %.0fs read timeout "
+                "- not retrying (a worker is likely already billed and "
+                "still starting up)",
+                timeout.read,
+            )
+            raise LLMWarmingUpError(
+                "The AI service is still starting up. Please try again "
+                "in a moment."
+            ) from exc
+
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            logger.error(
+                "LLM inference service returned HTTP %s (attempt %d/%d): %s",
+                exc.response.status_code,
+                attempt,
+                LLM_MAX_ATTEMPTS,
+                exc.response.text,
+            )
+            # Only worth retrying on transient/queueing errors, not on
+            # client errors like a bad payload or bad auth.
+            if exc.response.status_code < 500:
+                raise
+
+        except httpx.RequestError as exc:
+            # A connection-level failure (refused, DNS, etc.) happens
+            # before any worker is billed, so it's cheap/safe to retry.
+            last_exc = exc
+            logger.warning(
+                "Could not connect to LLM inference service (attempt %d/%d)",
+                attempt,
+                LLM_MAX_ATTEMPTS,
             )
 
-        response.raise_for_status()
+        if last_exc is not None and attempt < LLM_MAX_ATTEMPTS:
+            time.sleep(LLM_RETRY_BACKOFF_SECONDS * attempt)
 
-    except httpx.TimeoutException:
-        logger.exception("LLM inference request timed out")
-        raise
-
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "LLM inference service returned HTTP %s: %s",
-            exc.response.status_code,
-            exc.response.text,
-        )
-        raise
-
-    except httpx.RequestError:
+    if last_exc is not None:
         logger.exception(
-            "Could not connect to LLM inference service"
+            "LLM inference request failed after %d attempt(s)",
+            LLM_MAX_ATTEMPTS,
+            exc_info=last_exc,
         )
-        raise
+
+        if isinstance(last_exc, httpx.RequestError):
+            raise LLMWarmingUpError(
+                "The AI service is still starting up. Please try again "
+                "in a moment."
+            ) from last_exc
+
+        raise last_exc
 
     data = response.json()
 

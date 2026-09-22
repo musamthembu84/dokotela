@@ -636,6 +636,17 @@ resource "aws_instance" "web" {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+
+            # The consultation chat endpoint can block for several minutes
+            # while the remote RunPod GPU worker cold-starts. Nginx's 60s
+            # default proxy_read_timeout was cutting these requests off
+            # with a 504 long before the LLM response came back, so the
+            # browser saw nothing while the backend call kept running
+            # orphaned in the background. Give it enough headroom to
+            # cover a cold start plus inference time.
+            proxy_connect_timeout 300s;
+            proxy_send_timeout 300s;
+            proxy_read_timeout 300s;
         }
     }
     NGINXCONF

@@ -38,12 +38,19 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    # 20 minutes was too short: patients/doctors often schedule a visit well
-    # ahead of time and only come back at the appointed slot to join, so a
-    # short-lived token with no refresh flow would silently expire and
-    # produce a hard 401 on /visits/{id}/join. Bump this to a full day so a
-    # normal login stays valid for the whole session (book -> wait -> join).
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
+    # Access tokens stay short-lived on purpose (stateless, no Redis cost).
+    # Session "staying alive" is handled by the refresh token below, which
+    # slides forward on activity - so an active user is never logged out,
+    # but a genuinely idle user is kicked out after REFRESH_TOKEN_EXPIRE_MINUTES.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 20
+
+    # Idle timeout: refresh token TTL resets on every successful refresh, so
+    # it only expires after this many minutes of *inactivity*.
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 20
+
+    # Absolute safety-net cap on total session length regardless of activity
+    # (defense in depth against an indefinitely-renewed stolen refresh token).
+    REFRESH_TOKEN_ABSOLUTE_EXPIRE_HOURS: int = 24
 
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),
