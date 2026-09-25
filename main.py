@@ -20,6 +20,7 @@ from routes.consultation_notes import router as consultation_notes
 from routes.dokotela_chat import router as consultation
 from routes.doctor_onboarding import router as doctor_onboarding
 from routes.doctors import router as doctors
+from routes.llm import router as llm
 from routes.online_visits import router as visits
 from routes.payments import router as payments
 from routes.scheduling import router as scheduling
@@ -106,6 +107,7 @@ app.include_router(admin)
 app.include_router(doctors)
 app.include_router(scheduling)
 app.include_router(consultation_notes)
+app.include_router(llm)
 
 
 models.Base.metadata.create_all(bind=engine)
@@ -205,3 +207,6 @@ async def user(
 
 # uvicorn main:app --reload --port 8000
 # ngrok http --domain=tranquil-promotion-research.ngrok-free.dev 8000
+# % python -m mlx_lm.server --model mlx-community/medgemma-27b-text-it-4bit --port 8080
+# Local LLM inference (development only)
+#mlx_lm
