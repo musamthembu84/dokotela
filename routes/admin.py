@@ -2,8 +2,11 @@ import logging
 from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette import status
 
+from core import storage
+from core.config import settings
 from core.dependency import db_dependency
 from core.jwt_utils import get_current_user
 from models.models import PendingDoctorResponse, ApproveDoctorRequest, ApproveDoctorResponse, UserResponse, Users
@@ -17,12 +20,31 @@ token_dep = Annotated[dict, Depends(get_current_user)]
 
 @router.get("/doctors/pending", response_model=List[PendingDoctorResponse])
 def get_pending_doctors(db: db_dependency, token: token_dep):
-    """Return all doctor profiles awaiting verification. Admin only."""
+    """Return all doctor profiles awaiting verification, including their
+    banking details for review (e.g. checking the uploaded bank statement).
+    Admin only."""
     if token.get("role") != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
-    profiles = AdminService.get_pending_doctors(db)
-    return [PendingDoctorResponse.model_validate(p) for p in profiles]
+    return AdminService.get_pending_doctors(db)
+
+
+@router.get("/doctors/documents/{path:path}")
+def get_doctor_document(path: str, token: token_dep):
+    """
+    Opens a doctor's uploaded document (e.g. proof of banking) referenced by
+    `proof_of_banking_path`. Admin only. Works with either storage backend:
+    streams the file directly when STORAGE_BACKEND=local, or redirects to a
+    short-lived presigned URL when STORAGE_BACKEND=s3.
+    """
+    if token.get("role") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+    if settings.STORAGE_BACKEND == "s3":
+        return RedirectResponse(storage.presigned_s3_url(path))
+
+    file_path = storage.local_storage_path(path)
+    return FileResponse(file_path)
 
 
 @router.post("/doctors/{doctor_profile_id}/approve", response_model=ApproveDoctorResponse)

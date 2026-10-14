@@ -3,29 +3,56 @@ import logging
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from models.models import Users, DoctorProfiles
+from models.models import Users, DoctorProfiles, BankingDetails, BankingDetailsResponse, PendingDoctorResponse
 
 logger = logging.getLogger(__name__)
 
 class AdminService:
 
     @staticmethod
-    def get_pending_doctors(db: Session) -> list[type[DoctorProfiles]]:
-
-        pending_doctors = (
+    def get_pending_doctors(db: Session) -> list[PendingDoctorResponse]:
+        profiles = (
             db.query(DoctorProfiles)
-            .filter(DoctorProfiles.verification_status == "pending")
+            .filter(DoctorProfiles.verification_status.in_(["pending", "pending_review"]))
             .all()
         )
 
-        return pending_doctors
+        results = []
+        for profile in profiles:
+            banking = (
+                db.query(BankingDetails)
+                .filter(BankingDetails.doctor_id == profile.user_id)
+                .first()
+            )
+            results.append(
+                PendingDoctorResponse(
+                    id=profile.id,
+                    user_id=profile.user_id,
+                    full_legal_name=profile.full_legal_name,
+                    id_number=profile.id_number,
+                    practice_number=profile.practice_number,
+                    speciality=profile.speciality,
+                    verification_status=profile.verification_status,
+                    verifynow_reference=profile.verifynow_reference,
+                    banking=BankingDetailsResponse(
+                        bank_name=banking.bank_name,
+                        account_holder_name=banking.account_holder_name,
+                        account_number_masked=f"****{banking.account_number_last4}",
+                        branch_code=banking.branch_code,
+                        account_type=banking.account_type,
+                        proof_of_banking_path=banking.proof_of_banking_path,
+                    ) if banking else None,
+                )
+            )
+        return results
 
 
     @staticmethod
     def approve_doctor(db: Session, doctor_profile_id: int) -> type[DoctorProfiles]:
         """
-        Set DoctorProfiles.verification_status = 'active'
-        and Users.status = 'active' for the linked user.
+        Set DoctorProfiles.verification_status = 'active' and Users.status
+        = 'active' for the linked user. This is the only approval action -
+        banking details submitted at finalize aren't separately reviewed.
         """
         profile = db.get(DoctorProfiles, doctor_profile_id)
         if not profile:
@@ -50,6 +77,7 @@ class AdminService:
         try:
             profile.verification_status = "active"
             user.status = "active"
+
             db.commit()
             db.refresh(profile)
             db.refresh(user)

@@ -1,22 +1,16 @@
-import secrets
-from datetime import datetime, timedelta
 from typing import List, Annotated
 
-import bcrypt
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.params import Depends
 from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
 from core.dependency import db_dependency
 from core.jwt_utils import get_current_user, authorize_user_access
-from models.models import Users, UserRequest, UserResponse, OnboardingTokens
+from core.security import hash_password
+from models.models import Users, UserRequest, UserResponse
 from service.email_service import EmailService
 
 router = APIRouter(prefix="/users", tags=["users"])
-
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 token_dep = Annotated[dict, Depends(get_current_user)]
@@ -25,13 +19,21 @@ token_dep = Annotated[dict, Depends(get_current_user)]
 @router.post("/", status_code=HTTP_201_CREATED)
 async def create_user(db: db_dependency, create_user_request: UserRequest):
     """
-    Creates a new user with a hashed password and stores it in the database
+    Creates a new user (patient/admin) with a hashed password and stores it
+    in the database.
+
+    Doctors do NOT use this endpoint - they go through the 3-step identity
+    verification flow starting at POST /doctor/onboarding/start, since
+    nothing about a doctor is persisted until VerifyNow confirms their
+    identity and they submit banking details + schedule.
     """
     try:
         password = create_user_request.password
         type_of_user = create_user_request.role
         verify_user_type(type_of_user)
-        user_status = await get_type_of_user(type_of_user)
+        # Only patient/admin ever reach here (doctors are rejected above),
+        # and both start out "active" - no pending onboarding state needed.
+        user_status = "active"
         # Create user model
         create_user_model = Users(
             username=create_user_request.username,
@@ -42,25 +44,8 @@ async def create_user(db: db_dependency, create_user_request: UserRequest):
         )
 
         db.add(create_user_model)
-        db.flush()  # Flush to assign an ID before commit
-
-        tokens = None
-        if type_of_user == "doctor":
-            doctor_token = secrets.token_urlsafe(32)
-
-            tokens = OnboardingTokens(
-                doctor_id=create_user_model.id,
-                token=doctor_token,
-                expires_at=datetime.now() + timedelta(days=14),
-                used=False
-            )
-            db.add(tokens)
-            print(f"Onboarding token: {tokens.token}")
-
         db.commit()
         db.refresh(create_user_model)
-        if tokens is not None:
-            db.refresh(tokens)
 
         print(f"User created: {create_user_model.username}")
 
@@ -76,15 +61,6 @@ async def create_user(db: db_dependency, create_user_request: UserRequest):
         print(f"Unexpected error: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
-
-
-async def get_type_of_user(type_of_user: str) -> str:
-    user_status = ""
-    if type_of_user == "doctor":
-        user_status = "pending"
-    elif type_of_user == "patient" or type_of_user == "admin":
-        user_status = "active"
-    return user_status
 
 
 
@@ -141,9 +117,14 @@ async def delete_user(user_id: int, db: db_dependency):
 
 
 def verify_user_type(role: str):
-    if role not in ("doctor", "patient", "admin"):
+    if role == "doctor":
+        raise HTTPException(
+            status_code=400,
+            detail="Doctors must register via POST /doctor/onboarding/start",
+        )
+    if role not in ("patient", "admin"):
         raise HTTPException(status_code=400,
-                            detail=" Role must be 'doctor' or 'patient'")
+                            detail="Role must be 'patient' or 'admin'")
     return role
 
 
