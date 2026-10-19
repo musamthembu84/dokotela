@@ -313,6 +313,31 @@ resource "aws_iam_role_policy" "ec2_cloudwatch_logs" {
   })
 }
 
+resource "aws_iam_role_policy" "ec2_proof_of_banking_s3" {
+  # core/storage.py uploads doctor proof-of-banking documents via boto3
+  # using this instance's role (STORAGE_BACKEND=s3), and routes/admin.py
+  # generates presigned GET URLs signed by the same role for admin
+  # viewing - S3 validates the signer's live permissions when the
+  # presigned URL is actually used, so GetObject is required too, not
+  # just at signing time.
+  name = "${var.project_name}-ec2-proof-of-banking-s3"
+  role = aws_iam_role.ec2_ecr_pull.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.proof_of_banking.arn}/*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "ec2_ecr_pull" {
   name = "${var.project_name}-ec2-ecr-pull-profile"
   role = aws_iam_role.ec2_ecr_pull.name
@@ -355,24 +380,6 @@ resource "aws_security_group" "web_sg" {
     description = "HTTPS"
     from_port   = 443
     to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # Frontend - temporary direct public access
-  ingress {
-    description = "Frontend"
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # Backend API - temporary direct public access
-  ingress {
-    description = "Backend API"
-    from_port   = 8000
-    to_port     = 8000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -663,13 +670,31 @@ resource "aws_instance" "web" {
     # Restart Docker to pick up the log-driver config
     systemctl restart docker
 
-    # Basic Nginx reverse proxy in front of the FastAPI container.
-    # HTTP is served immediately; HTTPS is enabled below once a domain is
-    # configured and DNS has propagated.
-    cat <<'NGINXCONF' > /etc/nginx/sites-available/${var.project_name}
+    # Nginx reverse proxy: the apex/www domain goes to the Next.js
+    # frontend (:3000), the api. subdomain goes to the FastAPI backend
+    # (:8000). Falls back to a single catch-all backend proxy when no
+    # domain is configured yet. HTTP is served immediately; HTTPS is
+    # enabled below once DNS has propagated.
+    %{if var.domain_name != ""}
+    cat <<'NGINXCONF' > /etc/nginx/sites-available/${var.project_name}-frontend
     server {
         listen 80;
-        server_name ${var.domain_name != "" ? var.domain_name : "_"};
+        server_name ${var.domain_name} www.${var.domain_name};
+
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+    NGINXCONF
+
+    cat <<'NGINXCONF' > /etc/nginx/sites-available/${var.project_name}-api
+    server {
+        listen 80;
+        server_name api.${var.domain_name};
 
         location / {
             proxy_pass http://127.0.0.1:8000;
@@ -693,22 +718,65 @@ resource "aws_instance" "web" {
     NGINXCONF
 
     rm -f /etc/nginx/sites-enabled/default
+    ln -sf /etc/nginx/sites-available/${var.project_name}-frontend /etc/nginx/sites-enabled/${var.project_name}-frontend
+    ln -sf /etc/nginx/sites-available/${var.project_name}-api /etc/nginx/sites-enabled/${var.project_name}-api
+    %{else}
+    cat <<'NGINXCONF' > /etc/nginx/sites-available/${var.project_name}
+    server {
+        listen 80;
+        server_name _;
+
+        location / {
+            proxy_pass http://127.0.0.1:8000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 300s;
+            proxy_send_timeout 300s;
+            proxy_read_timeout 300s;
+        }
+    }
+    NGINXCONF
+
+    rm -f /etc/nginx/sites-enabled/default
     ln -sf /etc/nginx/sites-available/${var.project_name} /etc/nginx/sites-enabled/${var.project_name}
+    %{endif}
+
     nginx -t && systemctl restart nginx
     systemctl enable nginx
 
     %{if var.domain_name != "" && var.admin_email != ""}
-    # Obtain/renew the HTTPS certificate. Wrapped in `|| true` because DNS
-    # for a brand new Elastic IP may not have propagated yet at boot time;
-    # certbot can be re-run manually (or via its systemd timer) once it has.
+    # Obtain/renew the HTTPS certificate for the apex, www and api domains.
+    # Wrapped in `|| true` because DNS for a brand new Elastic IP may not
+    # have propagated yet at boot time; certbot can be re-run manually (or
+    # via its systemd timer) once it has.
     certbot --nginx \
       --non-interactive \
       --agree-tos \
       -m "${var.admin_email}" \
       -d "${var.domain_name}" \
+      -d "www.${var.domain_name}" \
+      -d "api.${var.domain_name}" \
       --redirect || true
     %{endif}
   EOF
+
+  # The AMI resolves to "current" at apply time (see data source above),
+  # which means any routine `terraform apply` can silently pick up a newer
+  # Ubuntu point release and force-replace this instance - wiping anything
+  # not captured in Terraform/git (this is exactly what happened on
+  # 2026-10-19, destroying the manually-configured domain/SSL setup).
+  # Pin the AMI post-creation; bump it deliberately (remove this line) when
+  # an intentional OS upgrade is wanted.
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
+  # Editing the bootstrap script above shouldn't force a replacement of a
+  # perfectly healthy running instance - apply the equivalent change via
+  # SSH instead and let this only govern future replacements.
+  user_data_replace_on_change = false
 
   tags = {
     Name        = "${var.project_name}-docker-server"
