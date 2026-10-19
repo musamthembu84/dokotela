@@ -1,7 +1,13 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from core.session_store import create_session, add_message, get_message, get_session
+from core.session_store import (
+    create_session,
+    add_message,
+    get_message,
+    get_session,
+    remove_last_message,
+)
 from core.llm_service import (
     generate_llm_reply,
     generate_llm_summary,
@@ -91,10 +97,16 @@ def chat(req: ChatRequest):
     except ValueError:
         raise HTTPException(status_code=404, detail="Invalid session")
     except LLMWarmingUpError as exc:
+        # Roll back the user's turn so a retry doesn't leave two
+        # consecutive "user" messages in history - see remove_last_message.
+        remove_last_message(req.session_id)
         # 503 (not 500) so the frontend can tell this apart from a real
         # failure and show a "still warming up" message with a retry,
         # instead of a generic "couldn't process that" error.
         raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        remove_last_message(req.session_id)
+        raise
 
 
 @router.post("/summary")

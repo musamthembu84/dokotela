@@ -88,6 +88,20 @@ def generate_llm_reply(
         for message in messages
     ]
 
+    # Defensive: the chat template enforces strict user/assistant
+    # alternation and hard-fails the whole request otherwise. A history
+    # with two consecutive same-role turns shouldn't normally happen
+    # (see routes/dokotela_chat.py's rollback-on-failure), but merging
+    # here means a stale/already-broken session self-heals instead of
+    # permanently failing every future request for that session.
+    merged_messages: list[dict] = []
+    for message in chat_messages:
+        if merged_messages and merged_messages[-1]["role"] == message["role"]:
+            merged_messages[-1]["content"] += f"\n\n{message['content']}"
+        else:
+            merged_messages.append(dict(message))
+    chat_messages = merged_messages
+
     if chat_messages and chat_messages[0]["role"] == "user":
         chat_messages[0]["content"] = (
             f"{SYSTEM_PROMPT}\n\n{chat_messages[0]['content']}"

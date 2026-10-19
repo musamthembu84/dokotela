@@ -42,6 +42,28 @@ def add_message(session_id: str, role: str, content: str):
     redis_client.setex(_key(session_id), SESSION_TTL_SECONDS, json.dumps(data))
 
 
+def remove_last_message(session_id: str):
+    """
+    Remove the most recently added message, if any. Used to roll back a
+    user's turn when generating the assistant's reply fails, so a failed
+    request doesn't leave two consecutive same-role turns in history -
+    MedGemma's chat template strictly enforces user/assistant alternation
+    and permanently fails every later request in the session (not just
+    the failed one) once that happens.
+    """
+    raw = redis_client.get(_key(session_id))
+
+    if not raw:
+        return
+
+    data = json.loads(raw)
+
+    if data["messages"]:
+        data["messages"].pop()
+
+    redis_client.setex(_key(session_id), SESSION_TTL_SECONDS, json.dumps(data))
+
+
 def get_message(session_id: str):
     raw = redis_client.get(_key(session_id))
 
