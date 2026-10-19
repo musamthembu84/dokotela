@@ -2,6 +2,7 @@ import logging
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -88,11 +89,22 @@ async def validation_exception_handler(
         exc.body,
     )
 
+    # Pydantic v2 puts the raw exception instance in error["ctx"]["error"]
+    # when a validator does `raise ValueError(...) from exc` - plain
+    # json.dumps can't handle that (500 instead of 422), so stringify ctx
+    # before it goes anywhere near a JSON response.
+    sanitized_errors = []
+    for error in exc.errors():
+        error = dict(error)
+        if "ctx" in error and isinstance(error["ctx"], dict):
+            error["ctx"] = {k: str(v) for k, v in error["ctx"].items()}
+        sanitized_errors.append(error)
+
     return JSONResponse(
         status_code=422,
         content={
-            "detail": exc.errors(),
-            "body": exc.body,
+            "detail": jsonable_encoder(sanitized_errors),
+            "body": jsonable_encoder(exc.body),
         },
     )
 

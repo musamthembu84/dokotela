@@ -30,6 +30,33 @@ class Settings(BaseSettings):
     AGORA_APP_ID: str = ""
     AGORA_APP_CERTIFICATE: str = ""
 
+    # VerifyNow (verifynow.co.za) — SA Home Affairs-backed identity verification
+    # used during doctor onboarding (ID + selfie match).
+    VERIFYNOW_API_KEY: str = ""
+    VERIFYNOW_BASE_URL: str = "https://www.verifynow.co.za/api/external"
+    VERIFYNOW_TIMEOUT_SECONDS: int = 20
+    # Sandbox mode uses VerifyNow's reserved test inputs (id number suffix
+    # 90 = negative, 91 = error) and is free; flip to False for production.
+    VERIFYNOW_SANDBOX: bool = True
+
+    # S3 storage for proof-of-banking uploads collected during doctor
+    # onboarding (finalize step). AWS_ENDPOINT_URL_S3 is only set for local
+    # dev against Minio/LocalStack - leave unset in production to hit AWS.
+    STORAGE_BACKEND: str = "local"  # "local" for dev, "s3" for production
+    LOCAL_STORAGE_DIR: str = "uploads"  # relative to project root, used when STORAGE_BACKEND=local
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "af-south-1"
+    AWS_ENDPOINT_URL_S3: str = ""
+    S3_BUCKET_NAME: str = ""
+    PROOF_OF_BANKING_MAX_MB: int = 10
+
+    # Fernet key (base64, 32 bytes) used to encrypt doctors' payout bank
+    # account numbers at rest. Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Rotate by re-encrypting existing rows if this ever changes.
+    PAYOUT_ENCRYPTION_KEY: str
+
     # Remote GPU inference service
     LLM_SERVICE_URL: str
     LLM_MODEL_NAME: str = "google/medgemma-27b-text-it"

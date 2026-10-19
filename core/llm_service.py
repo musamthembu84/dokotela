@@ -75,20 +75,31 @@ def generate_llm_reply(
         POST /v1/chat/completions
     """
 
+    # MedGemma's chat template (Gemma-based) rejects a "system" role: it
+    # strictly enforces user/assistant alternation and raises
+    # jinja2.exceptions.TemplateError("Conversation roles must alternate
+    # user/assistant/user/assistant/...") if one is present. Instead we
+    # fold the system prompt into the first user turn.
     chat_messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
-        }
-    ]
-
-    chat_messages.extend(
         {
             "role": message["role"],
             "content": message["content"],
         }
         for message in messages
-    )
+    ]
+
+    if chat_messages and chat_messages[0]["role"] == "user":
+        chat_messages[0]["content"] = (
+            f"{SYSTEM_PROMPT}\n\n{chat_messages[0]['content']}"
+        )
+    else:
+        chat_messages.insert(
+            0,
+            {
+                "role": "user",
+                "content": SYSTEM_PROMPT,
+            },
+        )
 
     payload = {
         "model": settings.LLM_MODEL_NAME,

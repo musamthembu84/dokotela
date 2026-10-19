@@ -24,3 +24,6 @@ terraform/crash.log
 
 # OS
 .DS_Store
+
+# Local file storage (dev only - STORAGE_BACKEND=local)
+/uploads/

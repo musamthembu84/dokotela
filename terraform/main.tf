@@ -212,6 +212,47 @@ resource "aws_ecr_lifecycle_policy" "dokotela_frontend" {
 }
 
 # =========================================================
+# S3 - PROOF OF BANKING UPLOADS
+# =========================================================
+#
+# Used by core/storage.py when STORAGE_BACKEND=s3 to store doctor
+# proof-of-banking documents collected during onboarding. Kept minimal for
+# now (default encryption + public access blocked) - IAM access
+# policy/role is added separately later.
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "proof_of_banking" {
+  # Bucket names are globally unique across all of AWS, so the account id
+  # is appended to avoid clashing with an existing bucket.
+  bucket = "${var.project_name}-proof-of-banking-${data.aws_caller_identity.current.account_id}"
+
+  tags = {
+    Name        = "${var.project_name}-proof-of-banking"
+    Environment = "production"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "proof_of_banking" {
+  bucket = aws_s3_bucket.proof_of_banking.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "proof_of_banking" {
+  bucket = aws_s3_bucket.proof_of_banking.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# =========================================================
 # IAM ROLE FOR EC2
 # =========================================================
 #

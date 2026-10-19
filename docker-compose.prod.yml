@@ -58,6 +58,22 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD is required}
       - SMTP_FROM=admin@dokotela-ai.com
 
+      - VERIFYNOW_API_KEY=${VERIFYNOW_API_KEY:?VERIFYNOW_API_KEY is required}
+      - VERIFYNOW_BASE_URL=https://www.verifynow.co.za/api/external
+      - VERIFYNOW_SANDBOX=${VERIFYNOW_SANDBOX:?VERIFYNOW_SANDBOX is required}
+
+      # Proof-of-banking uploads go to S3 in production (never "local" -
+      # see core/storage.py). AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are
+      # left unset here on purpose: boto3 falls back to the EC2 instance's
+      # IAM role when they're empty, so only set them in .env if this
+      # instance isn't using an instance role.
+      - STORAGE_BACKEND=s3
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+K
+      - PAYOUT_ENCRYPTION_KEY=${PAYOUT_ENCRYPTION_KEY:?PAYOUT_ENCRYPTION_KEY is required}
+
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 15m
