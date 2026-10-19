@@ -18,6 +18,16 @@ services:
       - FLYWAY_USER=${DB_USER:?DB_USER is required}
       - FLYWAY_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
       - FLYWAY_SCHEMAS=health
+      # Prod's `health` schema already contains the V1 tables (originally
+      # created by SQLAlchemy's Base.metadata.create_all before Flyway was
+      # introduced), but flyway_schema_history has never existed. Without
+      # baselining, Flyway tries to execute V1's CREATE TABLE statements
+      # again and fails with "relation already exists". This tells Flyway
+      # to record V1 as already-applied instead of re-running it, so only
+      # V2+ actually execute.
+      - FLYWAY_BASELINE_ON_MIGRATE=true
+      - FLYWAY_BASELINE_VERSION=1
+      - FLYWAY_BASELINE_DESCRIPTION=Pre-Flyway schema (created via SQLAlchemy create_all)
 
   fastapi:
     image: ${ECR_REPOSITORY_URL:?ECR_REPOSITORY_URL is required}:${IMAGE_TAG:?IMAGE_TAG is required}

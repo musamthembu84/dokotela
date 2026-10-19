@@ -27,11 +27,15 @@ ALTER TABLE health.doctor_profiles
     ADD COLUMN verifynow_reference VARCHAR(255),
     ALTER COLUMN verified_at DROP NOT NULL;
 
--- Backfill id_number for any pre-existing rows before adding the
--- NOT NULL + UNIQUE constraints below, then:
-ALTER TABLE health.doctor_profiles
-    ALTER COLUMN id_number SET NOT NULL,
-    ADD CONSTRAINT doctor_profiles_id_number_key UNIQUE (id_number);
+-- Pre-existing doctor_profiles rows (onboarded via the old manual
+-- HPCSA/document flow) have no id_number and no way to backfill one
+-- automatically (it's collected from VerifyNow for new doctors only),
+-- so id_number stays nullable here - enforced at the application layer
+-- for the new onboarding flow instead of a blanket NOT NULL. A partial
+-- unique index still prevents duplicates among rows that do have one.
+CREATE UNIQUE INDEX doctor_profiles_id_number_key
+    ON health.doctor_profiles (id_number)
+    WHERE id_number IS NOT NULL;
 
 -- New table: doctor banking details, submitted at the final onboarding
 -- step alongside the proof-of-banking document and schedule. Admin

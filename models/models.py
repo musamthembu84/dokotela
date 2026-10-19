@@ -4,7 +4,7 @@ from core.database import Base
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from datetime import datetime, time
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 
 
 # -------------------------
@@ -90,7 +90,12 @@ class DoctorProfiles(Base):
     user_id = Column(Integer, ForeignKey("health.users.id", ondelete="CASCADE"), nullable=False)
     full_legal_name = Column(String(255), nullable=False)
     # SA ID number used to verify identity with VerifyNow/Home Affairs.
-    id_number = Column(String(20), nullable=False, unique=True)
+    # Nullable: pre-existing doctor_profiles rows (onboarded before VerifyNow
+    # was introduced) have no id_number. New doctors always get one via the
+    # onboarding flow (enforced by DoctorOnboardingFinalizeRequest). DB-level
+    # uniqueness is a partial index (WHERE id_number IS NOT NULL) - see
+    # sql_versions/V2__Doctor_onboarding_and_banking_details.sql.
+    id_number = Column(String(20), nullable=True, unique=True)
     practice_number = Column(String(255), nullable=False, unique=True)
     speciality = Column(String(255), nullable=False)
     verification_status = Column(String(255), nullable=False, default="pending")
@@ -386,7 +391,8 @@ class PendingDoctorResponse(BaseModel):
     id: int
     user_id: int
     full_legal_name: str
-    id_number: str
+    # Optional: legacy doctor_profiles rows (pre-VerifyNow) have no id_number.
+    id_number: Optional[str] = None
     practice_number: str
     speciality: str
     verification_status: str
