@@ -43,6 +43,11 @@ output "redis_port" {
   value       = aws_elasticache_cluster.redis.cache_nodes[0].port
 }
 
+output "s3_proof_of_banking_bucket" {
+  description = "S3 bucket for doctor proof-of-banking uploads (STORAGE_BACKEND=s3). Deployment automation must consume this output rather than typing it manually."
+  value       = aws_s3_bucket.proof_of_banking.bucket
+}
+
 output "app_url" {
   description = "Public URL of the deployed application (HTTPS if domain_name/admin_email are set, otherwise plain HTTP over the Elastic IP)."
   value       = var.domain_name != "" ? "https://${var.domain_name}" : "http://${aws_eip.dokotela_static_ip.public_ip}"

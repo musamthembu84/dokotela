@@ -55,4 +55,4 @@ pydantic-settings==2.14.1
 agora-token-builder
 redis==6.4.0
 httpx>=0.24.0
-mlx_lm
+#mlx_lm
