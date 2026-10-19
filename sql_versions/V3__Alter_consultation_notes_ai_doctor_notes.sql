@@ -12,21 +12,34 @@ BEGIN;
 
 SET search_path TO health;
 
+-- Columns/backfill are guarded so this is a safe no-op on a database
+-- where consultation_notes was already created with the new shape
+-- directly (no `notes` column ever existed) rather than migrated here.
 ALTER TABLE consultation_notes
-    ADD COLUMN ai_note TEXT,
-    ADD COLUMN doctor_note TEXT,
-    ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+    ADD COLUMN IF NOT EXISTS ai_note TEXT,
+    ADD COLUMN IF NOT EXISTS doctor_note TEXT,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
--- Backfill existing notes into the new columns based on author.
-UPDATE consultation_notes
-SET ai_note = notes
-WHERE author = 'ai';
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'health'
+          AND table_name = 'consultation_notes'
+          AND column_name = 'notes'
+    ) THEN
+        -- Backfill existing notes into the new columns based on author.
+        UPDATE consultation_notes
+        SET ai_note = notes
+        WHERE author = 'ai';
 
-UPDATE consultation_notes
-SET doctor_note = notes
-WHERE author = 'doctor';
+        UPDATE consultation_notes
+        SET doctor_note = notes
+        WHERE author = 'doctor';
 
-ALTER TABLE consultation_notes
-    ALTER COLUMN notes DROP NOT NULL;
+        ALTER TABLE consultation_notes
+            ALTER COLUMN notes DROP NOT NULL;
+    END IF;
+END $$;
 
 COMMIT;

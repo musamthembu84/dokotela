@@ -14,15 +14,23 @@
 
 BEGIN;
 
--- doctor_profiles: hpcsa_number -> practice_number, drop document paths,
+-- doctor_profiles: hpcsa_number -> practice_number, archive the old
+-- manual-upload document paths (renamed rather than dropped, so existing
+-- doctors onboarded via the old flow don't lose their stored paths),
 -- add id_number + verifynow_reference, verified_at becomes nullable
 -- (only set once VerifyNow actually confirms identity).
 ALTER TABLE health.doctor_profiles
     RENAME COLUMN hpcsa_number TO practice_number;
 
 ALTER TABLE health.doctor_profiles
-    DROP COLUMN identity_document_path,
-    DROP COLUMN qualification_path,
+    RENAME COLUMN identity_document_path TO legacy_identity_document_path;
+
+ALTER TABLE health.doctor_profiles
+    RENAME COLUMN qualification_path TO legacy_qualification_path;
+
+ALTER TABLE health.doctor_profiles
+    ALTER COLUMN legacy_identity_document_path DROP NOT NULL,
+    ALTER COLUMN legacy_qualification_path DROP NOT NULL,
     ADD COLUMN id_number VARCHAR(20),
     ADD COLUMN verifynow_reference VARCHAR(255),
     ALTER COLUMN verified_at DROP NOT NULL;

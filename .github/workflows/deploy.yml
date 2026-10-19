@@ -61,31 +61,6 @@ jobs:
           echo "========================================="
           echo "$IMAGE_URI"
 
-      # Populates known_hosts with the EC2 instance's real host key so
-      # subsequent SSH/SCP steps use strict host key checking instead of
-      # failing because ~/.ssh doesn't exist yet on the runner.
-      - name: Prepare SSH known_hosts
-        id: known-hosts
-        env:
-          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          for i in $(seq 1 10); do
-            if ssh-keyscan -H "$EC2_PUBLIC_IP" >> ~/.ssh/known_hosts 2>/dev/null; then
-              break
-            fi
-            echo "Waiting for SSH on $EC2_PUBLIC_IP to become available..."
-            sleep 10
-          done
-
-          {
-            echo "known_hosts<<EOF"
-            cat ~/.ssh/known_hosts
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Copy Production Files to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -130,7 +105,6 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
-          known_hosts: ${{ steps.known-hosts.outputs.known_hosts }}
           envs: ECR_REGISTRY,IMAGE_TAG,DB_HOST,DB_PASSWORD,REDIS_HOST,LLM_SERVICE_URL,LLM_MODEL_NAME,RUNPOD_API_KEY,PAYFAST_MERCHANT_ID,PAYFAST_MERCHANT_KEY,PAYFAST_PASSPHRASE,PAYFAST_SANDBOX,AGORA_APP_ID,AGORA_APP_CERTIFICATE,SECRET_KEY,APP_BASE_URL,FRONTEND_BASE_URL,SMTP_PASSWORD,VERIFYNOW_API_KEY,VERIFYNOW_SANDBOX,S3_BUCKET_NAME,PAYOUT_ENCRYPTION_KEY
 
           script: |
@@ -253,7 +227,6 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
-          known_hosts: ${{ steps.known-hosts.outputs.known_hosts }}
           script: |
             set -e
             cd /home/ubuntu/app
