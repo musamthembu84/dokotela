@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, Request, HTTPException
 from typing import Annotated
+import json
 import logging
 
 from core.dependency import db_dependency
-from models.models import Payments, CheckoutResponse, CheckoutRequest
+from models.models import Payments, Users, CheckoutResponse, CheckoutRequest
 from core.jwt_utils import get_current_user, authorize_user_access
 from service.payment_service import PaymentService
 
@@ -25,14 +26,18 @@ def checkout(request: CheckoutRequest,
              current_user: int = Depends(get_current_user)):
 
     logger.info("Incoming checkout request: %s", request)
+    user = db.get(Users, current_user)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     payment = PaymentService.create_payment(
         db=db,
         user_id=current_user,
-        amount=int(request.amount),
+        amount=PaymentService.CONSULTATION_PRICE_ZAR,
         consultation_session_id=request.consultation_id
     )
 
-    payment_url = PaymentService.build_payment_url(payment)
+    payment_url = PaymentService.build_payment_url(payment, payer_name=user.username)
 
     return CheckoutResponse(
         payment_id=payment.id,
@@ -59,12 +64,12 @@ def get_payment_status(payment_id: int, db: db_dependency):
 
 @router.get("/success")
 def payment_success(payment_id: int, db: db_dependency):
-    """Return URL handler — PayFast redirects the user here after payment."""
+    """Return URL handler — Stitch redirects the user here after payment."""
     payment = db.get(Payments, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     return {
-        "message": "Payment received. Awaiting confirmation from PayFast.",
+        "message": "Payment received. Awaiting confirmation from Stitch.",
         "payment_id": payment.id,
         "status": payment.status,
         "amount": float(payment.amount),
@@ -73,7 +78,7 @@ def payment_success(payment_id: int, db: db_dependency):
 
 @router.get("/cancel")
 def payment_cancel(payment_id: int, db: db_dependency):
-    """Cancel URL handler — PayFast redirects here when the user cancels."""
+    """Cancel URL handler — Stitch redirects here when the user cancels."""
     payment = db.get(Payments, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
@@ -86,41 +91,51 @@ def payment_cancel(payment_id: int, db: db_dependency):
 
 
 @router.post("/webhook")
-async def payfast_webhook(request: Request, db: db_dependency):
-    form = await request.form()
-    data = dict(form)
+async def stitch_webhook(request: Request, db: db_dependency):
+    raw_body = await request.body()
+    svix_id = request.headers.get("svix-id")
+    svix_timestamp = request.headers.get("svix-timestamp")
+    svix_signature = request.headers.get("svix-signature")
 
-    logger.info("ITN received from PayFast: %s", data)
+    if not (svix_id and svix_timestamp and svix_signature):
+        logger.error("Stitch webhook missing svix headers")
+        raise HTTPException(status_code=400, detail="Missing webhook signature headers")
 
-    is_valid = PaymentService.verify_itn(data)
+    if not PaymentService.verify_webhook_signature(svix_id, svix_timestamp, svix_signature, raw_body):
+        logger.error("Stitch webhook signature verification failed (svix_id=%s)", svix_id)
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-    if not is_valid:
-        logger.error("ITN validation failed for data: %s", data)
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid PayFast notification",
-        )
+    payload = json.loads(raw_body)
+    logger.info("Stitch webhook received (svix_id=%s): %s", svix_id, payload)
 
-    payment_id = int(data["m_payment_id"])
-    provider_reference = data.get("pf_payment_id")
-    payment_status = data.get("payment_status")
+    if payload.get("type") != "LINK" or not payload.get("linkId"):
+        # Only payment links are used by this app (not card consents,
+        # subscriptions, or terminal sessions) — ack and ignore the rest.
+        logger.info("Stitch webhook: ignoring non-LINK payment type=%s", payload.get("type"))
+        return {"status": "ignored"}
 
-    logger.info("ITN payment_id=%s status=%s reference=%s", payment_id, payment_status, provider_reference)
+    # Don't trust the webhook body alone — re-confirm status directly with
+    # Stitch before crediting the payment (mirrors the old PayFast remote
+    # ITN validation step).
+    link = PaymentService.verify_payment_link(payload["linkId"])
+    if not link or link.get("status") != "PAID":
+        logger.error("Stitch webhook: payment link not confirmed PAID. payload=%s link=%s", payload, link)
+        raise HTTPException(status_code=400, detail="Payment not confirmed as paid")
 
     try:
-        if payment_status == "COMPLETE":
-            logger.info("Calling mark_payment_completed for payment_id=%s", payment_id)
-            payment = PaymentService.mark_payment_completed(
-                db=db,
-                payment_id=payment_id,
-                provider_reference=provider_reference,
-            )
-            logger.info("Payment %s marked completed. DB status=%s reference=%s", payment_id, payment.status,
-                        payment.payment_reference)
-        else:
-            logger.info("Calling mark_payment_failed for payment_id=%s", payment_id)
-            PaymentService.mark_payment_failed(db=db, payment_id=payment_id)
-            logger.info("Payment %s marked failed.", payment_id)
+        payment_id = int(link["merchantReference"])
+    except (TypeError, ValueError):
+        logger.error("Stitch webhook: invalid merchantReference=%s", link.get("merchantReference"))
+        raise HTTPException(status_code=400, detail="Invalid merchant reference")
+
+    try:
+        payment = PaymentService.mark_payment_completed(
+            db=db,
+            payment_id=payment_id,
+            provider_reference=payload["id"],
+        )
+        logger.info("Payment %s marked completed. DB status=%s reference=%s", payment_id, payment.status,
+                    payment.payment_reference)
     except Exception as e:
         logger.error("Error updating payment %s: %s", payment_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Payment update failed: {str(e)}")

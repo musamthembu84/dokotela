@@ -13,10 +13,17 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     REDIS_URL: str
 
-    PAYFAST_MERCHANT_ID: str
-    PAYFAST_MERCHANT_KEY: str
-    PAYFAST_PASSPHRASE: str = ""
-    PAYFAST_SANDBOX: bool = True
+    # Stitch Express (express.stitch.money) — payment gateway.
+    STITCH_CLIENT_ID: str
+    STITCH_CLIENT_SECRET: str
+    # Svix signing secret returned once by `POST /api/v1/webhook` (or the
+    # "Configure webhooks" dashboard button) when registering the webhook
+    # endpoint. Used to verify the svix-* headers on incoming webhooks.
+    STITCH_WEBHOOK_SECRET: str
+    # Must exactly match one of the up-to-5 URLs registered as a "Redirect
+    # URL" in the Stitch dashboard for the active mode (test/live) — Stitch
+    # rejects a payment-link redirect otherwise.
+    STITCH_REDIRECT_URL: str
 
     APP_BASE_URL: str
     FRONTEND_BASE_URL: str

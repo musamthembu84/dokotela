@@ -1,6 +1,11 @@
+import base64
 import hashlib
+import hmac
 import logging
+import time
 import urllib.parse
+from decimal import Decimal
+
 import requests
 from sqlalchemy.orm import Session
 
@@ -12,8 +17,16 @@ from service.email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
+STITCH_BASE_URL = "https://express.stitch.money"
+
+# Module-level cache for the client-credentials token. Stitch tokens expire
+# after 15 minutes, so we refresh a couple of minutes early rather than
+# caching for the full lifetime.
+_token_cache = {"access_token": None, "expires_at": 0.0}
+
 
 class PaymentService:
+    CONSULTATION_PRICE_ZAR = Decimal("600.00")
 
     @staticmethod
     def create_payment(db: Session, user_id: int, amount, consultation_session_id: str | None = None) -> Payments:
@@ -22,6 +35,7 @@ class PaymentService:
             user_id=user_id,
             amount=amount,
             status="pending",
+            provider="stitch",
             consultation_session_id=consultation_session_id
         )
         db.add(payment)
@@ -30,102 +44,112 @@ class PaymentService:
         return payment
 
     @staticmethod
-    def generate_signature(data: dict) -> str:
-        # Remove empty/None values but preserve original key order (PayFast requirement)
-        filtered = {k: v for k, v in data.items() if v not in (None, "")}
+    def _get_access_token() -> str:
+        now = time.time()
+        if _token_cache["access_token"] and _token_cache["expires_at"] > now:
+            return _token_cache["access_token"]
 
-        # Build URL-encoded query string in original insertion order (do NOT sort)
-        encoded = urllib.parse.urlencode(filtered)
-
-        if settings.PAYFAST_PASSPHRASE:
-            encoded += "&passphrase=" + urllib.parse.quote_plus(
-                settings.PAYFAST_PASSPHRASE
-            )
-        return hashlib.md5(encoded.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    def build_payment_url(payment: Payments) -> str:
-        host = (
-            "https://sandbox.payfast.co.za/eng/process"
-            if settings.PAYFAST_SANDBOX
-            else "https://www.payfast.co.za/eng/process"
+        response = requests.post(
+            f"{STITCH_BASE_URL}/api/v1/token",
+            json={
+                "clientId": settings.STITCH_CLIENT_ID,
+                "clientSecret": settings.STITCH_CLIENT_SECRET,
+                "scope": "client_paymentrequest",
+            },
+            timeout=15,
         )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success"):
+            raise RuntimeError(f"Stitch token request failed: {body}")
 
-        data = {
-            "merchant_id": settings.PAYFAST_MERCHANT_ID,
-            "merchant_key": settings.PAYFAST_MERCHANT_KEY,
-            "return_url": f"{settings.FRONTEND_BASE_URL}/vedio-generator?payment_id={payment.id}",
-            "cancel_url": f"{settings.FRONTEND_BASE_URL}/payments/cancel?payment_id={payment.id}",
-            "notify_url": f"{settings.APP_BASE_URL}/payments/webhook",
-            "m_payment_id": str(payment.id),
-            "amount": f"{payment.amount:.2f}",
-            "item_name": "Dokotela Consultation",
-            "custom_str1": payment.consultation_session_id or "",
-        }
-
-        signature = PaymentService.generate_signature(data)
-        data["signature"] = signature
-
-        return host + "?" + urllib.parse.urlencode(data)
+        access_token = body["data"]["accessToken"]
+        _token_cache["access_token"] = access_token
+        # Tokens are valid for 15 minutes; refresh 2 minutes early.
+        _token_cache["expires_at"] = now + 13 * 60
+        return access_token
 
     @staticmethod
-    def _itn_signature(data: dict) -> str:
+    def build_payment_url(payment: Payments, payer_name: str) -> str:
         """
-        Compute signature for an incoming ITN payload.
-        PayFast includes ALL fields (even empty strings) when it builds the
-        ITN signature — unlike the outgoing checkout signature which strips empties.
+        Create a Stitch payment link for this payment and return the URL the
+        payer should be sent to. The redirect-back URL is appended as
+        `redirect_url` and must exactly match a URL already registered in
+        the Stitch dashboard (Developers > Redirect URLs).
         """
-        # Keep every field except 'signature' itself; preserve order PayFast sent
-        filtered = {k: v for k, v in data.items() if k != "signature" and v is not None}
-        encoded = urllib.parse.urlencode(filtered)
-        if settings.PAYFAST_PASSPHRASE:
-            encoded += "&passphrase=" + urllib.parse.quote_plus(settings.PAYFAST_PASSPHRASE)
-        return hashlib.md5(encoded.encode("utf-8")).hexdigest()
+        token = PaymentService._get_access_token()
+        amount_cents = int((payment.amount * 100).to_integral_value())
+
+        response = requests.post(
+            f"{STITCH_BASE_URL}/api/v1/payment-links",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "amount": amount_cents,
+                "payerName": (payer_name or "Dokotela Patient")[:40],
+                "merchantReference": str(payment.id),
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success"):
+            raise RuntimeError(f"Stitch payment-link creation failed: {body}")
+
+        link = body["data"]["payment"]["link"]
+        separator = "&" if "?" in link else "?"
+        return f"{link}{separator}redirect_url={urllib.parse.quote(settings.STITCH_REDIRECT_URL, safe='')}"
 
     @staticmethod
-    def verify_itn(form_data: dict) -> bool:
+    def verify_webhook_signature(svix_id: str, svix_timestamp: str, svix_signature: str, raw_body: bytes) -> bool:
         """
-        ITN verification:
-        1. Validate signature
-        2. Confirm with PayFast (skipped in sandbox — sandbox endpoint is unreliable)
+        Verify a Stitch webhook delivery, signed by Svix.
+        Signed content: "{svix_id}.{svix_timestamp}.{body}", HMAC-SHA256
+        using the base64-decoded key portion of the whsec_ secret.
         """
-        received_signature = form_data.get("signature")
-        if not received_signature:
-            logger.error("ITN: missing signature")
+        secret = settings.STITCH_WEBHOOK_SECRET
+        if not secret.startswith("whsec_"):
+            logger.error("STITCH_WEBHOOK_SECRET is missing or malformed (expected whsec_ prefix)")
             return False
 
-        data_without_signature = {k: v for k, v in form_data.items() if k != "signature"}
-        expected_signature = PaymentService._itn_signature(form_data)
+        key = base64.b64decode(secret.split("_", 1)[1])
+        signed_content = f"{svix_id}.{svix_timestamp}.{raw_body.decode('utf-8')}".encode("utf-8")
+        expected_signature = base64.b64encode(
+            hmac.new(key, signed_content, hashlib.sha256).digest()
+        ).decode("utf-8")
 
-        logger.info("ITN received signature : %s", received_signature)
-        logger.info("ITN expected signature : %s", expected_signature)
-        logger.info("ITN payload (no sig)   : %s", urllib.parse.urlencode(data_without_signature))
+        for part in svix_signature.split(" "):
+            if "," not in part:
+                continue
+            _, provided_signature = part.split(",", 1)
+            if hmac.compare_digest(provided_signature, expected_signature):
+                return True
 
-        if expected_signature != received_signature:
-            logger.error("ITN signature mismatch — rejecting")
-            return False
+        logger.error("Stitch webhook signature mismatch")
+        return False
 
-        # Skip remote validation in sandbox (endpoint is flaky)
-        if settings.PAYFAST_SANDBOX:
-            logger.info("ITN sandbox mode — skipping remote validation")
-            return True
+    @staticmethod
+    def verify_payment_link(link_id: str) -> dict | None:
+        """
+        Re-confirm a payment link's status directly with Stitch — mirrors
+        the old PayFast remote ITN validation step (don't trust the webhook
+        body alone; confirm with the provider before crediting a payment).
+        """
+        token = PaymentService._get_access_token()
+        response = requests.get(
+            f"{STITCH_BASE_URL}/api/v1/payment-links/{link_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        if response.status_code != 200:
+            logger.error("Stitch payment-link lookup failed: status=%s body=%s", response.status_code, response.text)
+            return None
 
-        validation_url = "https://www.payfast.co.za/eng/query/validate"
-        payload = urllib.parse.urlencode(form_data)
+        body = response.json()
+        if not body.get("success"):
+            logger.error("Stitch payment-link lookup returned success=false: %s", body)
+            return None
 
-        try:
-            response = requests.post(
-                validation_url,
-                data=payload,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=30,
-            )
-            result = response.text.strip()
-            logger.info("ITN remote validation response: %s", result)
-            return result == "VALID"
-        except Exception as exc:
-            logger.error("ITN remote validation request failed: %s", exc)
-            return False
+        return body["data"]["payment"]
 
     @staticmethod
     def mark_payment_completed(db: Session, payment_id: int,
@@ -135,6 +159,10 @@ class PaymentService:
         if not payment:
             logger.error("mark_payment_completed: payment_id=%s NOT FOUND", payment_id)
             raise ValueError("Payment not found.")
+
+        if payment.status == "completed":
+            logger.info("mark_payment_completed: payment_id=%s already completed — ignoring duplicate webhook delivery", payment_id)
+            return payment
 
         logger.info("mark_payment_completed: found payment, current status=%s", payment.status)
         payment.status = "completed"

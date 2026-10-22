@@ -32,7 +32,7 @@ class Payments(Base):
     amount = Column(Numeric(10, 2), nullable=False)
     currency = Column(String, default="ZAR", nullable=False)
     status = Column(String, default="pending", nullable=False)
-    provider = Column(String, nullable=False, default="payfast")
+    provider = Column(String, nullable=False, default="stitch")
     payment_reference = Column(String(255), unique=True, nullable=True)
     consultation_session_id = Column(String(255), nullable=True, unique=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
@@ -224,7 +224,9 @@ class PaymentResponse(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
-    amount: Decimal
+    # Price is fixed server-side (PaymentService.CONSULTATION_PRICE_ZAR); this
+    # field is accepted but ignored so older frontend builds don't break.
+    amount: Decimal | None = None
     consultation_id: str | None = None
 
 
