@@ -167,19 +167,6 @@ class PaymentService:
         logger.info("mark_payment_completed: found payment, current status=%s", payment.status)
         payment.status = "completed"
         payment.payment_reference = provider_reference
-        db.flush()  # write payment changes without closing session
-
-        # Load AI summary from Redis using the consultation_session_id stored at checkout
-        summary_text = None
-        session_id = payment.consultation_session_id
-        if session_id:
-            session_data = get_session(session_id)
-            if session_data and session_data.get("messages"):
-                ai_summary = generate_llm_summary(session_data["messages"])
-                summary_text = ai_summary.get("summary")
-                logger.info("AI summary loaded for session %s: %s", session_id, summary_text)
-            else:
-                logger.warning("No session data found in Redis for session_id=%s", session_id)
 
         # patient_id is already on the payment record — no JWT needed in webhook
         consultation = Consultations(
@@ -188,26 +175,46 @@ class PaymentService:
             status="paid",
         )
         db.add(consultation)
-        db.flush()  # flush so consultation.id is available for notes FK
 
-        # Persist AI intake summary as a consultation note
-        if summary_text:
-            note = ConsultationNotes(
-                consultation_id=consultation.id,
-                author="ai",
-                type="SOAP_AI",
-                ai_note=summary_text,
-            )
-            db.add(note)
-            logger.info("ConsultationNote created for consultation_id=%s", consultation.id)
-        else:
-            logger.warning("No summary available — skipping ConsultationNote for consultation_id=%s", consultation.id)
-
-        db.commit()  # single commit for payment + consultation + notes
+        # Commit payment + consultation now, before touching the AI summary
+        # below. The LLM call can take minutes on a cold start - the visit
+        # must be bookable (and visible to the frontend's status polling)
+        # immediately, not held hostage by a slow/best-effort AI note.
+        db.commit()
         db.refresh(payment)
         db.refresh(consultation)
         logger.info("mark_payment_completed: commit done, status=%s reference=%s", payment.status, payment.payment_reference)
         logger.info("Consultation created: id=%s patient_id=%s payment_id=%s", consultation.id, consultation.patient_id, consultation.payment_id)
+
+        # Load AI summary from Redis using the consultation_session_id stored
+        # at checkout, and persist it as a separate commit. Best-effort: a
+        # failure here must not undo the payment/consultation committed above.
+        session_id = payment.consultation_session_id
+        if session_id:
+            session_data = get_session(session_id)
+            if session_data and session_data.get("messages"):
+                try:
+                    ai_summary = generate_llm_summary(session_data["messages"])
+                    summary_text = ai_summary.get("summary")
+                    logger.info("AI summary loaded for session %s: %s", session_id, summary_text)
+                except Exception as exc:
+                    logger.error("AI summary generation failed for session %s: %s", session_id, exc, exc_info=True)
+                    summary_text = None
+
+                if summary_text:
+                    note = ConsultationNotes(
+                        consultation_id=consultation.id,
+                        author="ai",
+                        type="SOAP_AI",
+                        ai_note=summary_text,
+                    )
+                    db.add(note)
+                    db.commit()
+                    logger.info("ConsultationNote created for consultation_id=%s", consultation.id)
+                else:
+                    logger.warning("No summary available — skipping ConsultationNote for consultation_id=%s", consultation.id)
+            else:
+                logger.warning("No session data found in Redis for session_id=%s", session_id)
 
         patient = db.get(Users, payment.user_id)
         if patient:
