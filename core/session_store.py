@@ -74,6 +74,20 @@ def get_message(session_id: str):
     return data["messages"]
 
 
+def set_summary(session_id: str, summary: str):
+    """Attach the AI-generated SOAP summary to the session, generated at
+    checkout time so it's ready well before the payment webhook needs it."""
+    raw = redis_client.get(_key(session_id))
+
+    if not raw:
+        return
+
+    data = json.loads(raw)
+    data["summary"] = summary
+
+    redis_client.setex(_key(session_id), SESSION_TTL_SECONDS, json.dumps(data))
+
+
 def get_session(session_id: str) -> dict | None:
     """Return the full session dict, or None if it doesn't exist / has expired."""
     raw = redis_client.get(_key(session_id))

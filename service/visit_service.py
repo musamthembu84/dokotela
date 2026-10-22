@@ -46,6 +46,27 @@ class VisitService:
                 detail="No paid consultation found for this patient",
             )
 
+        # Make this idempotent: a payment success can trigger more than one
+        # concurrent request to book the same consultation (e.g. multiple
+        # open tabs each polling payment status). Without this, the second
+        # request would race the first for the same doctor's slot, find it
+        # just-taken by the first, and fail with a misleading "no doctor
+        # available" instead of just returning the visit that already exists.
+        existing_visit = (
+            db.query(Visit)
+            .filter(Visit.consultation_id == consultation.id)
+            .first()
+        )
+        if existing_visit:
+            return {
+                "message": "Visit already scheduled",
+                "visit_id": existing_visit.id,
+                "consultation_id": consultation.id,
+                "assigned_doctor_id": existing_visit.doctor_id,
+                "scheduled_at": existing_visit.scheduled_at,
+                "status": existing_visit.status,
+            }
+
         # ------------------------------------------------------------------
         # 2. Extract scheduling info
         # ------------------------------------------------------------------

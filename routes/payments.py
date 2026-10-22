@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, HTTPException
 from typing import Annotated
 import json
 import logging
@@ -23,6 +23,7 @@ def get_current_user(db: db_dependency, token: token_dep):
 @router.post("/checkout", response_model=CheckoutResponse)
 def checkout(request: CheckoutRequest,
              db: db_dependency,
+             background_tasks: BackgroundTasks,
              current_user: int = Depends(get_current_user)):
 
     logger.info("Incoming checkout request: %s", request)
@@ -36,6 +37,12 @@ def checkout(request: CheckoutRequest,
         amount=PaymentService.CONSULTATION_PRICE_ZAR,
         consultation_session_id=request.consultation_id
     )
+
+    # The chat is already finished at this point - generate the doctor's AI
+    # SOAP note now, in the background, fully decoupled from payment. The
+    # payment webhook must never depend on the LLM being fast or reachable.
+    if request.consultation_id:
+        background_tasks.add_task(PaymentService.generate_and_store_summary, request.consultation_id)
 
     payment_url = PaymentService.build_payment_url(payment, payer_name=user.username)
 

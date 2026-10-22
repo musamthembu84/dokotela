@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from models.models import Payments, Consultations, ConsultationNotes, Users
 from core.config import settings
-from core.session_store import get_session
+from core.session_store import get_session, set_summary
 from core.llm_service import generate_llm_summary
 from service.email_service import EmailService
 
@@ -152,8 +152,29 @@ class PaymentService:
         return body["data"]["payment"]
 
     @staticmethod
+    def generate_and_store_summary(consultation_session_id: str):
+        """
+        Best-effort: generate the AI SOAP summary from the chat transcript
+        and stash it on the Redis session. Called as a FastAPI background
+        task right after checkout - the chat is already finished by then,
+        so this has nothing to do with the payment itself and must never
+        run anywhere near the payment webhook's critical path.
+        """
+        try:
+            session_data = get_session(consultation_session_id)
+            if not session_data or not session_data.get("messages"):
+                return
+            ai_summary = generate_llm_summary(session_data["messages"])
+            summary_text = ai_summary.get("summary")
+            if summary_text:
+                set_summary(consultation_session_id, summary_text)
+                logger.info("AI summary generated at checkout for session %s", consultation_session_id)
+        except Exception as exc:
+            logger.error("AI summary generation failed for session %s: %s", consultation_session_id, exc, exc_info=True)
+
+    @staticmethod
     def mark_payment_completed(db: Session, payment_id: int,
-                               provider_reference: str) -> type[Payments]:
+                                provider_reference: str) -> type[Payments]:
         logger.info("mark_payment_completed: looking up payment_id=%s", payment_id)
         payment = db.get(Payments, payment_id)
         if not payment:
@@ -176,45 +197,34 @@ class PaymentService:
         )
         db.add(consultation)
 
-        # Commit payment + consultation now, before touching the AI summary
-        # below. The LLM call can take minutes on a cold start - the visit
-        # must be bookable (and visible to the frontend's status polling)
-        # immediately, not held hostage by a slow/best-effort AI note.
         db.commit()
         db.refresh(payment)
         db.refresh(consultation)
         logger.info("mark_payment_completed: commit done, status=%s reference=%s", payment.status, payment.payment_reference)
         logger.info("Consultation created: id=%s patient_id=%s payment_id=%s", consultation.id, consultation.patient_id, consultation.payment_id)
 
-        # Load AI summary from Redis using the consultation_session_id stored
-        # at checkout, and persist it as a separate commit. Best-effort: a
-        # failure here must not undo the payment/consultation committed above.
+        # The AI summary was already generated as a background task right
+        # after checkout (see generate_and_store_summary) - the webhook just
+        # reads whatever's sitting in Redis. No LLM call here, ever: nothing
+        # in the payment-completion path should depend on an LLM being fast,
+        # reachable, or even warm.
         session_id = payment.consultation_session_id
         if session_id:
             session_data = get_session(session_id)
-            if session_data and session_data.get("messages"):
-                try:
-                    ai_summary = generate_llm_summary(session_data["messages"])
-                    summary_text = ai_summary.get("summary")
-                    logger.info("AI summary loaded for session %s: %s", session_id, summary_text)
-                except Exception as exc:
-                    logger.error("AI summary generation failed for session %s: %s", session_id, exc, exc_info=True)
-                    summary_text = None
+            summary_text = session_data.get("summary") if session_data else None
 
-                if summary_text:
-                    note = ConsultationNotes(
-                        consultation_id=consultation.id,
-                        author="ai",
-                        type="SOAP_AI",
-                        ai_note=summary_text,
-                    )
-                    db.add(note)
-                    db.commit()
-                    logger.info("ConsultationNote created for consultation_id=%s", consultation.id)
-                else:
-                    logger.warning("No summary available — skipping ConsultationNote for consultation_id=%s", consultation.id)
+            if summary_text:
+                note = ConsultationNotes(
+                    consultation_id=consultation.id,
+                    author="ai",
+                    type="SOAP_AI",
+                    ai_note=summary_text,
+                )
+                db.add(note)
+                db.commit()
+                logger.info("ConsultationNote created for consultation_id=%s", consultation.id)
             else:
-                logger.warning("No session data found in Redis for session_id=%s", session_id)
+                logger.warning("No AI summary available — skipping ConsultationNote for consultation_id=%s", consultation.id)
 
         patient = db.get(Users, payment.user_id)
         if patient:
