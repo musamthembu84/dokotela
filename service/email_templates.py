@@ -97,39 +97,18 @@ def _base_template(
 
 def welcome_email_template(username: str) -> str:
     body_html = f"""
-    <p style="font-size:18px; font-weight:600; margin:0 0 16px 0;">Hi {username}, welcome aboard 👋</p>
+    <p style="font-size:18px; font-weight:600; margin:0 0 16px 0;">Hi {username}, your account has been created.</p>
     <p style="margin:0 0 16px 0;">
-      Your Dokotela account is live. You now have a medical AI in your pocket,
-      ready to listen any time of day, plus real doctors on standby when you
-      need a second opinion.
+      This confirms that your Dokotela account was registered successfully.
+      You can now log in using the email and password you provided.
     </p>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
-      <tr>
-        <td style="padding:12px 0; border-top:1px solid #f0f1f7;">
-          <strong>💬 Chat free, anytime</strong><br/>
-          <span style="color:#5b5d75;">Describe your symptoms and get instant, judgment-free guidance from our Medical AI.</span>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:12px 0; border-top:1px solid #f0f1f7;">
-          <strong>🩺 Real doctors, on demand</strong><br/>
-          <span style="color:#5b5d75;">Escalate to a live video consultation with a licensed physician for R600/visit.</span>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:12px 0; border-top:1px solid #f0f1f7;">
-          <strong>🔒 Private &amp; secure</strong><br/>
-          <span style="color:#5b5d75;">Your conversations and health data are handled with care, every step of the way.</span>
-        </td>
-      </tr>
-    </table>
-    <p style="margin:0;">Talk soon,<br/>The Dokotela Team</p>
+    <p style="margin:0;">Regards,<br/>The Dokotela Team</p>
     """
 
     return _base_template(
-        preheader="Your Dokotela account is ready. Chat with our Medical AI or book a doctor visit.",
+        preheader="Your Dokotela account has been registered successfully.",
         body_html=body_html,
-        cta_text="Start with AI",
+        cta_text="Log in to my account",
         cta_url=settings.FRONTEND_BASE_URL,
     )
 

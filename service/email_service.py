@@ -56,7 +56,7 @@ class EmailService:
         Any failure is logged, not raised, so registration is never
         blocked by an email delivery problem.
         """
-        subject = "Welcome to Dokotela \u2014 your medical AI is ready"
+        subject = "Your Dokotela account has been created"
         html_body = welcome_email_template(username)
 
         try:
